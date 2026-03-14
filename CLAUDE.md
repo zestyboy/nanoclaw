@@ -60,6 +60,15 @@ systemctl --user restart nanoclaw
 
 **WhatsApp not connecting after upgrade:** WhatsApp is now a separate channel fork, not bundled in core. Run `/add-whatsapp` (or `git remote add whatsapp https://github.com/qwibitai/nanoclaw-whatsapp.git && git fetch whatsapp main && (git merge whatsapp/main || { git checkout --theirs package-lock.json && git add package-lock.json && git merge --continue; }) && npm run build`) to install it. Existing auth credentials and groups are preserved.
 
+## Apple Container Runtime
+
+This install uses **Apple Container** (not Docker). After running `/update-nanoclaw`, verify the upstream merge hasn't reverted these Apple Container adaptations:
+
+- **`src/container-runtime.ts`**: `CONTAINER_HOST_GATEWAY` must resolve to `192.168.64.1` (not `host.docker.internal`). `PROXY_BIND_HOST` must bind to `192.168.64.1` (not `127.0.0.1`). Apple Container VMs sit on a `192.168.64.0/24` vnet and cannot resolve `host.docker.internal`.
+- **`src/container-runner.ts`**: Must NOT have a host-side `/dev/null` bind mount for `.env` shadowing. Apple Container's VirtioFS cannot mount character devices. The `.env` shadow is handled inside the container entrypoint via `mount --bind /dev/null`.
+
+If these were overwritten, re-apply the fixes or run `/convert-to-apple-container`.
+
 ## Container Build Cache
 
 The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.
