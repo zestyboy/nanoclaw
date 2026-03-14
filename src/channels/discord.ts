@@ -190,7 +190,9 @@ export class DiscordChannel implements Channel {
         'Discord slash command received',
       );
 
-      this.opts.onSlashCommand(chatJid, command, async (text: string) => {
+      const args = interaction.options.getString('message') || '';
+
+      this.opts.onSlashCommand(chatJid, command, args, async (text: string) => {
         try {
           await interaction.reply({ content: text, ephemeral: true });
         } catch (err) {
@@ -309,6 +311,42 @@ export class DiscordChannel implements Channel {
       new SlashCommandBuilder()
         .setName('clear')
         .setDescription('Clear the current session context'),
+      new SlashCommandBuilder()
+        .setName('catalog')
+        .setDescription('Catalog information to a project')
+        .addStringOption((opt) =>
+          opt
+            .setName('message')
+            .setDescription('What to catalog (e.g. "for project: notes...")')
+            .setRequired(true),
+        ),
+      new SlashCommandBuilder()
+        .setName('execute')
+        .setDescription('Execute a task in a project')
+        .addStringOption((opt) =>
+          opt
+            .setName('message')
+            .setDescription('What to execute (e.g. "for project: build...")')
+            .setRequired(true),
+        ),
+      new SlashCommandBuilder()
+        .setName('knowledge')
+        .setDescription('Store or search the knowledge repository')
+        .addStringOption((opt) =>
+          opt
+            .setName('message')
+            .setDescription('What to store or search for')
+            .setRequired(true),
+        ),
+      new SlashCommandBuilder()
+        .setName('ask')
+        .setDescription('Ask for help routing — list matching projects')
+        .addStringOption((opt) =>
+          opt
+            .setName('message')
+            .setDescription('Your question or message to route')
+            .setRequired(true),
+        ),
     ];
 
     try {

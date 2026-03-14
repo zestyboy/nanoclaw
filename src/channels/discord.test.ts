@@ -121,6 +121,15 @@ vi.mock('discord.js', () => {
       this._description = desc;
       return this;
     }
+    addStringOption(fn: (opt: any) => any) {
+      const optBuilder = {
+        setName: () => optBuilder,
+        setDescription: () => optBuilder,
+        setRequired: () => optBuilder,
+      };
+      fn(optBuilder);
+      return this;
+    }
     toJSON() {
       return { name: this._name, description: this._description };
     }
@@ -232,6 +241,7 @@ function createInteraction(overrides: {
   userId?: string;
   userTag?: string;
   isChatInputCommand?: boolean;
+  messageOption?: string;
 }) {
   return {
     channelId: overrides.channelId ?? '1234567890123456',
@@ -239,6 +249,11 @@ function createInteraction(overrides: {
     user: {
       id: overrides.userId ?? '55512345',
       tag: overrides.userTag ?? 'alice#1234',
+    },
+    options: {
+      getString: vi.fn((name: string) =>
+        name === 'message' ? (overrides.messageOption ?? null) : null,
+      ),
     },
     isChatInputCommand: () => overrides.isChatInputCommand ?? true,
     reply: vi.fn().mockResolvedValue(undefined),
@@ -842,6 +857,19 @@ describe('DiscordChannel', () => {
         {
           body: [
             { name: 'clear', description: 'Clear the current session context' },
+            {
+              name: 'catalog',
+              description: 'Catalog information to a project',
+            },
+            { name: 'execute', description: 'Execute a task in a project' },
+            {
+              name: 'knowledge',
+              description: 'Store or search the knowledge repository',
+            },
+            {
+              name: 'ask',
+              description: 'Ask for help routing — list matching projects',
+            },
           ],
         },
       );
@@ -867,6 +895,7 @@ describe('DiscordChannel', () => {
       expect(opts.onSlashCommand).toHaveBeenCalledWith(
         'dc:1234567890123456',
         'clear',
+        '',
         expect.any(Function),
       );
     });
@@ -887,6 +916,7 @@ describe('DiscordChannel', () => {
         async (
           _jid: string,
           _cmd: string,
+          _args: string,
           respond: (text: string) => Promise<void>,
         ) => {
           await respond('Session cleared.');

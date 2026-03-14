@@ -13,6 +13,7 @@ import {
 export type OnSlashCommand = (
   chatJid: string,
   command: string,
+  args: string,
   respond: (text: string) => Promise<void>,
 ) => void;
 

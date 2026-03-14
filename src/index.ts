@@ -544,6 +544,7 @@ async function main(): Promise<void> {
     onSlashCommand: (
       chatJid: string,
       command: string,
+      args: string,
       respond: (text: string) => Promise<void>,
     ) => {
       const group = registeredGroups[chatJid];
@@ -564,9 +565,58 @@ async function main(): Promise<void> {
           ),
         );
         logger.info({ group: group.name }, 'Session cleared via slash command');
-      } else {
-        respond(`Unknown command: /${command}`).catch(() => {});
+        return;
       }
+
+      // Brain Router passthrough commands — inject as a prefixed message
+      // into the main group for the Brain Router to classify.
+      const passthroughCommands = ['catalog', 'execute', 'knowledge', 'ask'];
+      if (passthroughCommands.includes(command)) {
+        // Find the Brain Router group (folder 'main') — prefer it over other
+        // isMain groups since the Brain Router prompt handles intent routing.
+        const mainEntry =
+          Object.entries(registeredGroups).find(
+            ([, g]) => g.folder === 'main',
+          ) ||
+          Object.entries(registeredGroups).find(([, g]) => g.isMain === true);
+        if (!mainEntry) {
+          respond('No main group configured.').catch(() => {});
+          return;
+        }
+        const [mainJid, mainGroup] = mainEntry;
+
+        // Build the prefixed message content
+        const content = `/${command} ${args}`.trim();
+        const now = new Date().toISOString();
+
+        // Inject as a synthetic message into the main group
+        storeMessage({
+          id: `slash-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          chat_jid: mainJid,
+          sender: 'owner',
+          sender_name: 'Owner',
+          content,
+          timestamp: now,
+          is_from_me: false,
+        });
+        queue.enqueueMessageCheck(mainJid);
+
+        // Acknowledge the interaction
+        const ack = `/${command} received.`;
+        respond(ack).catch((err) =>
+          logger.warn(
+            { chatJid, command, err },
+            'Failed to acknowledge slash command',
+          ),
+        );
+        logger.info(
+          { command, args, source: chatJid, target: mainJid },
+          'Slash command passed through to Brain Router',
+        );
+        return;
+      }
+
+      respond(`Unknown command: /${command}`).catch(() => {});
     },
     registeredGroups: () => registeredGroups,
   };

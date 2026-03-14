@@ -16,23 +16,36 @@ Match incoming messages against projects:
 - Explicit project mention ("for island-attack:" or "in saas-mvp:") -> direct match
 - Alias match: keywords match a project's aliases
 - Semantic match: message content relates to a project's brief
-- Recent context: if ambiguous and no `?` prefix, prefer the most recently routed project
+- Recent context: if ambiguous and no `/ask` or `?` prefix, prefer the most recently routed project
 
-**`?` prefix — force disambiguation:** When a message starts with `?`, the user is TELLING you they don't know which project it belongs to. You MUST:
-1. Strip the `?` prefix
+**`/ask` or `?` prefix — force disambiguation:** When a message starts with `/ask` or `?`, the user is TELLING you they don't know which project it belongs to. You MUST:
+1. Strip the `/ask` or `?` prefix
 2. Re-read projects.yaml
 3. List EVERY project that could even loosely relate to the message
 4. Ask the user to pick one — show each option with its channel link
-5. Do NOT auto-route. Do NOT say "clear match." The `?` means "I need help deciding."
+5. Do NOT auto-route. Do NOT say "clear match." The prefix means "I need help deciding."
 6. Ignore conversation history, prior notes, and prior handling completely.
 
 Confidence handling:
 - **Clear match:** Route immediately. Confirm with a clickable channel link.
-- **Ambiguous (2-3 matches), no `?` prefix:** Use recent context as tiebreaker. If still ambiguous, ask.
-- **Ambiguous with `?` prefix:** ALWAYS ask. Say: "This could go in **A** or **B**. Which one?" Include channel links for each. Never auto-pick.
+- **Ambiguous (2-3 matches), no `/ask` or `?` prefix:** Use recent context as tiebreaker. If still ambiguous, ask.
+- **Ambiguous with `/ask` or `?` prefix:** ALWAYS ask. Say: "This could go in **A** or **B**. Which one?" Include channel links for each. Never auto-pick.
 - **No match:** Propose new project. If user confirms, use `mcp__nanoclaw__create_project` to create it automatically (Discord channel, group registration, folder, CLAUDE.md, everything). Then catalog/execute to the new project.
 
 ## Intent Detection
+
+### Slash Prefix Override
+
+When a message starts with a slash prefix, use the stated intent directly — skip signal-word heuristics:
+
+- `/catalog` → CATALOG
+- `/execute` → EXECUTE
+- `/knowledge` → KNOWLEDGE
+- `/ask` → Force disambiguation (list all matching projects, ask user to pick)
+
+Strip the prefix before processing the rest of the message. Project matching still applies as normal (e.g., `/execute for saas-mvp: build pricing page`).
+
+### Signal-Word Detection (fallback for unprefixed messages)
 
 - **CATALOG** (default): User is sharing information, ideas, notes, context.
   - Signals: informational statements, "catalog", "note", "remember", "add to", or no action verb
