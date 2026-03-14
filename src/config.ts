@@ -40,7 +40,8 @@ export const PROJECTS_DIR =
   process.env.NANOCLAW_PROJECTS_DIR ||
   path.join(HOME_DIR, 'development', 'nanoclaw-projects');
 export const KNOWLEDGE_DIR =
-  process.env.NANOCLAW_KNOWLEDGE_DIR || path.join(HOME_DIR, 'knowledge');
+  process.env.NANOCLAW_KNOWLEDGE_DIR ||
+  path.join(HOME_DIR, 'development', 'nanoclaw-knowledge');
 
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
