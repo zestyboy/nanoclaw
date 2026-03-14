@@ -81,6 +81,8 @@ fi
 
 ### Create launchd plist (macOS)
 
+Find the actual qmd binary path with `which qmd` and use the full path in ProgramArguments.
+
 Write `~/Library/LaunchAgents/com.nanoclaw.qmd.plist`:
 
 ```xml
@@ -93,9 +95,19 @@ Write `~/Library/LaunchAgents/com.nanoclaw.qmd.plist`:
   <string>com.nanoclaw.qmd</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/local/bin/qmd</string>
-    <string>serve</string>
+    <string>/opt/homebrew/bin/qmd</string>
+    <string>mcp</string>
+    <string>--http</string>
+    <string>--port</string>
+    <string>8181</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>/Users/niven</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -108,7 +120,7 @@ Write `~/Library/LaunchAgents/com.nanoclaw.qmd.plist`:
 </plist>
 ```
 
-**Important:** Find the actual qmd binary path with `which qmd` and use the full path in ProgramArguments.
+**Important:** launchd doesn't inherit the user's shell environment. The plist must set `PATH` (so qmd can find `node`) and `HOME` (so qmd finds its cache/index).
 
 ### Load the service
 
@@ -119,7 +131,9 @@ launchctl load ~/Library/LaunchAgents/com.nanoclaw.qmd.plist
 ### Verify
 
 ```bash
-curl -s http://127.0.0.1:8181/status || echo "qmd not responding — check /tmp/qmd.err"
+curl -s -X POST http://127.0.0.1:8181/query -H "Content-Type: application/json" \
+  -d '{"searches": [{"type": "lex", "query": "test"}], "limit": 1}' \
+  || echo "qmd not responding — check /tmp/qmd.err"
 ```
 
 ## Phase 5: Build & Verify

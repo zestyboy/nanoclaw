@@ -571,7 +571,11 @@ export async function processTaskIpc(
           JSON.stringify({ success: true, results }),
         );
         logger.info(
-          { sourceGroup, resultFileName, resultCount: Array.isArray(results) ? results.length : 'unknown' },
+          {
+            sourceGroup,
+            resultFileName,
+            resultCount: Array.isArray(results) ? results.length : 'unknown',
+          },
           'Knowledge search completed',
         );
       } catch (err) {
@@ -582,10 +586,7 @@ export async function processTaskIpc(
             error: 'Knowledge search unavailable — is qmd running?',
           }),
         );
-        logger.error(
-          { err, sourceGroup },
-          'Knowledge search failed',
-        );
+        logger.error({ err, sourceGroup }, 'Knowledge search failed');
       }
       break;
     }

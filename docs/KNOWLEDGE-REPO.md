@@ -237,7 +237,12 @@ qmd embed
 
 **Run as HTTP server** (persistent, keeps models loaded):
 ```bash
-qmd serve
+qmd mcp --http --port 8181
+```
+
+For background/daemon mode (detaches from terminal):
+```bash
+qmd mcp --http --port 8181 --daemon
 ```
 
 Default port is 8181. The HTTP API endpoint:
@@ -260,9 +265,19 @@ Create `~/Library/LaunchAgents/com.nanoclaw.qmd.plist`:
   <string>com.nanoclaw.qmd</string>
   <key>ProgramArguments</key>
   <array>
-    <string>qmd</string>
-    <string>serve</string>
+    <string>/opt/homebrew/bin/qmd</string>
+    <string>mcp</string>
+    <string>--http</string>
+    <string>--port</string>
+    <string>8181</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>/Users/niven</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -275,8 +290,10 @@ Create `~/Library/LaunchAgents/com.nanoclaw.qmd.plist`:
 </plist>
 ```
 
-**Why HTTP and not qmd's MCP server mode:**
-qmd also supports running as an MCP server directly. However, NanoClaw containers communicate with the host exclusively through IPC files — there's no MCP transport bridge from container to host services. Using qmd's HTTP API through the existing IPC handler pattern keeps everything within the NanoClaw framework. The host process calls qmd's HTTP endpoint on behalf of the container agent, same as how `execute_in_group` and `create_project` work. If NanoClaw later gains MCP-over-network support for containers, qmd's MCP mode could replace the HTTP+IPC approach.
+**Note:** The plist must use the full path to `qmd` (find with `which qmd`) and set `PATH`/`HOME` environment variables since launchd doesn't inherit the user's shell environment.
+
+**Why HTTP and not qmd's MCP stdio mode:**
+qmd supports both MCP stdio and MCP-over-HTTP modes. We use MCP-over-HTTP because NanoClaw containers communicate with the host exclusively through IPC files — there's no MCP stdio bridge from container to host services. Using qmd's HTTP API through the existing IPC handler pattern keeps everything within the NanoClaw framework. The host process calls qmd's HTTP endpoint on behalf of the container agent, same as how `execute_in_group` and `create_project` work.
 
 ### 6. `search_knowledge` MCP Tool
 
