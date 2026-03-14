@@ -1,6 +1,6 @@
-# Knowledge Repository — Implementation Plan
+# Public Knowledge Repository — Implementation Plan
 
-A searchable Obsidian vault integrated into the Brain Router system. Information is ingested via the Brain Router's messaging interface and organized following [Kepano's vault methodology](https://stephango.com/vault). Search is powered by [qmd](https://github.com/tobi/qmd) running as a local HTTP server. Both the Brain Router and project agents can query the knowledge base.
+A searchable Obsidian vault integrated into the Brain Router system. Information is ingested via the Brain Router's messaging interface and organized following [Kepano's vault methodology](https://stephango.com/vault). Search is powered by [qmd](https://github.com/tobi/qmd) running as a local HTTP server. Both the Brain Router and project agents can query the public knowledge base.
 
 ---
 
@@ -10,19 +10,19 @@ Before implementing, read these files to understand the existing system and the 
 
 | File | Why |
 |------|-----|
-| `docs/BRAIN-ROUTER.md` | Full architecture of the Brain Router system — routing, intents, project creation, message flow. This plan adds a KNOWLEDGE intent alongside the existing CATALOG and EXECUTE intents. |
-| `src/ipc.ts` | IPC handler structure. Study the `execute_in_group` and `create_project` cases — the new `search_knowledge` and `reindex_knowledge` handlers follow the same pattern. Note the `IpcDeps` interface and authorization model (`sourceGroup.isMain`). |
-| `src/container-runner.ts` | Container mount system. Study `buildVolumeMounts()`, especially the `isMain` block where main group gets extra mounts (`/workspace/all-groups`, `/workspace/projects`). The knowledge vault mount follows this same pattern. |
-| `src/config.ts` | Configuration constants. `PROJECTS_DIR` is the model for `KNOWLEDGE_DIR`. |
-| `container/agent-runner/src/ipc-mcp-stdio.ts` | MCP tool definitions. Study existing tools (`execute_in_group`, `create_project`) for the pattern — each tool writes an IPC task file that the host picks up. `search_knowledge` and `reindex_knowledge` follow the same structure. |
-| `groups/main/CLAUDE.md` | Current Brain Router prompt. This plan adds KNOWLEDGE intent detection, entity resolution, knowledge storage/search sections, and template evolution instructions to this file. |
-| `container/skills/agent-browser/SKILL.md` | Example container skill. The knowledge skill (`container/skills/knowledge/SKILL.md`) follows this format — a SKILL.md prompt document that teaches agents conventions and capabilities. |
+| `docs/BRAIN-ROUTER.md` | Full architecture of the Brain Router system — routing, intents, project creation, message flow. This plan adds a PUBLIC_KNOWLEDGE intent alongside the existing CATALOG and EXECUTE intents. |
+| `src/ipc.ts` | IPC handler structure. Study the `execute_in_group` and `create_project` cases — the new `search_public_knowledge` and `reindex_public_knowledge` handlers follow the same pattern. Note the `IpcDeps` interface and authorization model (`sourceGroup.isMain`). |
+| `src/container-runner.ts` | Container mount system. Study `buildVolumeMounts()`, especially the `isMain` block where main group gets extra mounts (`/workspace/all-groups`, `/workspace/projects`). The public knowledge vault mount follows this same pattern. |
+| `src/config.ts` | Configuration constants. `PROJECTS_DIR` is the model for `PUBLIC_KNOWLEDGE_DIR`. |
+| `container/agent-runner/src/ipc-mcp-stdio.ts` | MCP tool definitions. Study existing tools (`execute_in_group`, `create_project`) for the pattern — each tool writes an IPC task file that the host picks up. `search_public_knowledge` and `reindex_public_knowledge` follow the same structure. |
+| `groups/main/CLAUDE.md` | Current Brain Router prompt. This plan adds PUBLIC_KNOWLEDGE intent detection, entity resolution, public knowledge storage/search sections, and template evolution instructions to this file. |
+| `container/skills/agent-browser/SKILL.md` | Example container skill. The public knowledge skill (`container/skills/public-knowledge/SKILL.md`) follows this format — a SKILL.md prompt document that teaches agents conventions and capabilities. |
 
 **External references:**
 - [kepano-obsidian vault](https://github.com/kepano/kepano-obsidian) — Template vault to clone for initialization
 - [qmd SKILL.md](https://github.com/tobi/qmd/blob/main/skills/qmd/SKILL.md) — qmd's full API reference (query types, HTTP endpoint, CLI commands, MCP tools)
 - [Kepano's vault methodology](https://stephango.com/vault) — Vault organization philosophy (folder structure, properties, linking, templates)
-- [obsidian-skills](https://github.com/kepano/obsidian-skills) — Agent skills for Obsidian markdown, defuddle, CLI, bases, canvas (separate upstream skills referenced by the knowledge skill)
+- [obsidian-skills](https://github.com/kepano/obsidian-skills) — Agent skills for Obsidian markdown, defuddle, CLI, bases, canvas (separate upstream skills referenced by the public knowledge skill)
 
 ---
 
@@ -34,8 +34,8 @@ User (WhatsApp/Telegram)
   ▼
 Brain Router (main group)
   │
-  ├─ KNOWLEDGE intent → writes to knowledge vault (Obsidian markdown)
-  │                      triggers qmd re-embed (fire-and-forget)
+  ├─ PUBLIC_KNOWLEDGE intent → writes to public knowledge vault (Obsidian markdown)
+  │                             triggers qmd re-embed (fire-and-forget)
   │
   ├─ EXECUTE + "pull from knowledge" → searches qmd, prepends results
   │                                     to execute_in_group prompt
@@ -44,8 +44,8 @@ Brain Router (main group)
 
 Project Agent (any group)
   │
-  ├─ /workspace/knowledge (read-only mount)
-  ├─ search_knowledge MCP tool → host IPC → qmd HTTP API
+  ├─ /workspace/public-knowledge (read-only mount)
+  ├─ search_public_knowledge MCP tool → host IPC → qmd HTTP API
   └─ Only searches when user explicitly asks
 ```
 
@@ -53,9 +53,9 @@ Project Agent (any group)
 
 ## Components
 
-### 1. Knowledge Vault Directory
+### 1. Public Knowledge Vault Directory
 
-**Location:** `~/knowledge` (configurable via `NANOCLAW_KNOWLEDGE_DIR` env var)
+**Location:** `~/knowledge` (configurable via `NANOCLAW_PUBLIC_KNOWLEDGE_DIR` env var)
 
 **Structure (Kepano's system):**
 ```
@@ -79,13 +79,13 @@ Project Agent (any group)
 - `Categories/` → hub notes that link to everything in a topic
 - `Attachments/` → non-markdown files
 
-**Templates:** Start with whatever ships in the kepano-obsidian vault. Templates evolve organically as usage patterns emerge — the knowledge skill teaches conventions, not rigid structures.
+**Templates:** Start with whatever ships in the kepano-obsidian vault. Templates evolve organically as usage patterns emerge — the public knowledge skill teaches conventions, not rigid structures.
 
 **Initialize** via the `/add-knowledge` setup skill (see Phase 1).
 
-### 2. Knowledge Container Skill
+### 2. Public Knowledge Container Skill
 
-**File:** `container/skills/knowledge/SKILL.md`
+**File:** `container/skills/public-knowledge/SKILL.md`
 
 A prompt document that teaches container agents the vault conventions. Loaded by both the Brain Router agent (for writing) and project agents (for reading/interpreting search results).
 
@@ -119,11 +119,11 @@ related:                     # wikilinks to connected notes
 
 **Entity resolution (lookup-before-write):**
 
-The Brain Router is stateless between sessions — it has no memory of what it named a file last week. Without an explicit lookup step, saying "Acme Corp" on Monday and "Acme" on Thursday could create duplicate notes. The knowledge skill encodes a mandatory lookup-before-write process:
+The Brain Router is stateless between sessions — it has no memory of what it named a file last week. Without an explicit lookup step, saying "Acme Corp" on Monday and "Acme" on Thursday could create duplicate notes. The public knowledge skill encodes a mandatory lookup-before-write process:
 
 1. **Extract the entity/topic name** from the user's message. Identify what the note would be *about* (e.g., "Acme Corp", "SaaS pricing trends", "the design system").
 
-2. **List files in the target directory.** If the entity looks like a company → `ls /workspace/knowledge/References/`. If it's a clipping → `ls /workspace/knowledge/Clippings/`. If synthesis → `ls /workspace/knowledge/` (root). Scan filenames for matches.
+2. **List files in the target directory.** If the entity looks like a company → `ls /workspace/public-knowledge/References/`. If it's a clipping → `ls /workspace/public-knowledge/Clippings/`. If synthesis → `ls /workspace/public-knowledge/` (root). Scan filenames for matches.
 
 3. **Search qmd for the entity name.** This catches notes that mention the entity even if the filename differs. Use a lex search with the entity name:
    ```json
@@ -147,13 +147,13 @@ The Brain Router is stateless between sessions — it has no memory of what it n
    ```
    This helps both Obsidian (link suggestions) and future lookups.
 
-This process is part of the knowledge skill instructions, not application code. The Brain Router agent follows it on every KNOWLEDGE intent before writing anything.
+This process is part of the public knowledge skill instructions, not application code. The Brain Router agent follows it on every PUBLIC_KNOWLEDGE intent before writing anything.
 
 **Template evolution process:**
 
-The vault starts with no custom templates — just the defaults from kepano-obsidian. Templates emerge from actual usage patterns rather than upfront design. The knowledge skill includes instructions for this feedback loop:
+The vault starts with no custom templates — just the defaults from kepano-obsidian. Templates emerge from actual usage patterns rather than upfront design. The public knowledge skill includes instructions for this feedback loop:
 
-1. **Track structure during ingestion.** Every time the Brain Router creates or updates a knowledge note, it reads `/workspace/knowledge/Templates/` to see what templates exist. It also scans recent notes of the same type (e.g., `References/` files with `category: competitors`) to see what sections and frontmatter they share.
+1. **Track structure during ingestion.** Every time the Brain Router creates or updates a public knowledge note, it reads `/workspace/public-knowledge/Templates/` to see what templates exist. It also scans recent notes of the same type (e.g., `References/` files with `category: competitors`) to see what sections and frontmatter they share.
 
 2. **Detect patterns.** When the Brain Router notices it has created 3+ notes of the same type with a recurring structure (similar sections, same frontmatter fields, same folder), it flags this to the user:
 
@@ -161,7 +161,7 @@ The vault starts with no custom templates — just the defaults from kepano-obsi
 
 3. **Propose, don't act.** The Brain Router describes the proposed template (sections, frontmatter fields, folder placement) and waits for confirmation. It never creates templates silently.
 
-4. **Create on approval.** If the user confirms, the Brain Router writes the template to `/workspace/knowledge/Templates/{name}.md` using Obsidian's template format. Future notes of that type use it as a starting point.
+4. **Create on approval.** If the user confirms, the Brain Router writes the template to `/workspace/public-knowledge/Templates/{name}.md` using Obsidian's template format. Future notes of that type use it as a starting point.
 
 5. **Refine over time.** When the user stores knowledge that deviates from an existing template (adds new sections, drops unused ones), the Brain Router may suggest updating the template:
 
@@ -170,7 +170,7 @@ The vault starts with no custom templates — just the defaults from kepano-obsi
 The skill encodes these rules so the Brain Router knows when to suggest, what threshold to use (3+ similar notes), and how to phrase the proposal. The goal is that the template library reflects how you *actually* organize knowledge, not how someone predicted you would.
 
 **Relationship to obsidian skills:**
-The knowledge skill references the [obsidian-skills](https://github.com/kepano/obsidian-skills) package for markdown syntax (obsidian-markdown) and web content extraction (defuddle). These are separate, upstream-updatable skills. The knowledge skill adds vault-specific conventions and Brain Router integration on top.
+The public knowledge skill references the [obsidian-skills](https://github.com/kepano/obsidian-skills) package for markdown syntax (obsidian-markdown) and web content extraction (defuddle). These are separate, upstream-updatable skills. The public knowledge skill adds vault-specific conventions and Brain Router integration on top.
 
 The Obsidian CLI skill is not part of this system — Obsidian's built-in search is rudimentary and qmd is the primary search path. If an Obsidian community plugin with advanced search is later installed manually, the CLI could serve as a backup search path, but that's a future consideration outside this plan.
 
@@ -180,8 +180,8 @@ The Obsidian CLI skill is not part of this system — Obsidian's built-in search
 
 Add:
 ```typescript
-export const KNOWLEDGE_DIR =
-  process.env.NANOCLAW_KNOWLEDGE_DIR ||
+export const PUBLIC_KNOWLEDGE_DIR =
+  process.env.NANOCLAW_PUBLIC_KNOWLEDGE_DIR ||
   path.join(HOME_DIR, 'knowledge');
 ```
 
@@ -189,8 +189,8 @@ export const KNOWLEDGE_DIR =
 
 Add:
 ```
-# Knowledge repository
-NANOCLAW_KNOWLEDGE_DIR=~/knowledge
+# Public knowledge repository
+NANOCLAW_PUBLIC_KNOWLEDGE_DIR=~/knowledge
 ```
 
 ### 4. Container Mounts
@@ -199,11 +199,11 @@ NANOCLAW_KNOWLEDGE_DIR=~/knowledge
 
 **Main group** — read-write access for ingestion:
 ```typescript
-// Main gets writable access to knowledge vault for ingestion
-if (fs.existsSync(KNOWLEDGE_DIR)) {
+// Main gets writable access to public knowledge vault for ingestion
+if (fs.existsSync(PUBLIC_KNOWLEDGE_DIR)) {
   mounts.push({
-    hostPath: KNOWLEDGE_DIR,
-    containerPath: '/workspace/knowledge',
+    hostPath: PUBLIC_KNOWLEDGE_DIR,
+    containerPath: '/workspace/public-knowledge',
     readonly: false,
   });
 }
@@ -211,11 +211,11 @@ if (fs.existsSync(KNOWLEDGE_DIR)) {
 
 **Non-main groups** — read-only access (opt-in search):
 ```typescript
-// All groups get read-only access to knowledge vault
-if (fs.existsSync(KNOWLEDGE_DIR)) {
+// All groups get read-only access to public knowledge vault
+if (fs.existsSync(PUBLIC_KNOWLEDGE_DIR)) {
   mounts.push({
-    hostPath: KNOWLEDGE_DIR,
-    containerPath: '/workspace/knowledge',
+    hostPath: PUBLIC_KNOWLEDGE_DIR,
+    containerPath: '/workspace/public-knowledge',
     readonly: true,
   });
 }
@@ -230,29 +230,29 @@ npm install -g @tobilu/qmd
 
 **Add collection and build embeddings:**
 ```bash
-qmd collection add ~/knowledge --name knowledge
+qmd collection add ~/knowledge --name public-knowledge
 qmd embed
 ```
 
 **No background service needed.** qmd is invoked via CLI (`qmd query ... --json`) on each search request. The host IPC handler spawns `qmd query` as a subprocess, parses the JSON output, and returns results to the container agent. This matches NanoClaw's zero-open-ports architecture — no HTTP server, no daemon, no launchd plist.
 
-**Tradeoff:** Each query pays a cold-start cost (~200-500ms for keyword search, 1-3s for vector/hybrid search with model loading). For a personal knowledge base searched a few times per day via messaging, this is negligible.
+**Tradeoff:** Each query pays a cold-start cost (~200-500ms for keyword search, 1-3s for vector/hybrid search with model loading). For a personal public knowledge base searched a few times per day via messaging, this is negligible.
 
 **CLI examples:**
 ```bash
 # Structured query (lex + vec)
 qmd query $'lex: competitor pricing\nvec: what pricing strategies are competitors using' \
-  --json -c knowledge -n 5
+  --json -c public-knowledge -n 5
 
 # With intent disambiguation
 qmd query $'intent: API feature pricing\nlex: API access pricing' \
-  --json -c knowledge -n 5
+  --json -c public-knowledge -n 5
 
 # Reindex after writing new files
-qmd update -c knowledge && qmd embed
+qmd update -c public-knowledge && qmd embed
 ```
 
-### 6. `search_knowledge` MCP Tool
+### 6. `search_public_knowledge` MCP Tool
 
 **File:** `container/agent-runner/src/ipc-mcp-stdio.ts`
 
@@ -260,8 +260,8 @@ Add a new MCP tool available to all groups:
 
 ```typescript
 {
-  name: 'search_knowledge',
-  description: 'Search the knowledge repository using qmd. Returns relevant documents and snippets. Only use when the user explicitly asks to search or pull from the knowledge base.',
+  name: 'search_public_knowledge',
+  description: 'Search the public knowledge repository using qmd. Returns relevant documents and snippets. Only use when the user explicitly asks to search or pull from the public knowledge base.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -292,16 +292,16 @@ Add a new MCP tool available to all groups:
 ```
 
 **IPC flow:**
-1. Agent calls `search_knowledge` MCP tool
-2. Tool writes IPC task file with `type: 'search_knowledge'`
-3. Host IPC handler picks it up, runs `qmd query ... --json -c knowledge` via CLI
+1. Agent calls `search_public_knowledge` MCP tool
+2. Tool writes IPC task file with `type: 'search_public_knowledge'`
+3. Host IPC handler picks it up, runs `qmd query ... --json -c public-knowledge` via CLI
 4. Results written back to IPC response file
 5. Agent receives search results as structured JSON
 
 **File:** `src/ipc.ts` — add handler:
 
 ```typescript
-case 'search_knowledge': {
+case 'search_public_knowledge': {
   const { searches, intent, limit = 10 } = data;
   try {
     // Build qmd structured query document from searches array
@@ -315,30 +315,30 @@ case 'search_knowledge': {
     const { execFileSync } = await import('child_process');
     const output = execFileSync(
       'qmd',
-      ['query', queryDoc, '--json', '-c', 'knowledge', '-n', String(limit)],
+      ['query', queryDoc, '--json', '-c', 'public-knowledge', '-n', String(limit)],
       { encoding: 'utf-8', timeout: 30000 },
     );
     const results = JSON.parse(output);
     return { success: true, results };
   } catch (err) {
-    return { success: false, error: 'Knowledge search failed — is qmd installed?' };
+    return { success: false, error: 'Public knowledge search failed — is qmd installed?' };
   }
 }
 ```
 
-### 7. `reindex_knowledge` IPC Handler
+### 7. `reindex_public_knowledge` IPC Handler
 
 **File:** `src/ipc.ts`
 
-Triggered after the Brain Router writes a new knowledge file. Runs as fire-and-forget — the agent doesn't wait for completion.
+Triggered after the Brain Router writes a new public knowledge file. Runs as fire-and-forget — the agent doesn't wait for completion.
 
 ```typescript
-case 'reindex_knowledge': {
+case 'reindex_public_knowledge': {
   // Main-only: only the Brain Router should trigger reindexing
   if (!isMain) break;
-  // Fire-and-forget: update index then regenerate embeddings
+  // Fire-and-forget: update public knowledge index then regenerate embeddings
   const { spawn } = await import('child_process');
-  const child = spawn('sh', ['-c', 'qmd update -c knowledge && qmd embed'], {
+  const child = spawn('sh', ['-c', 'qmd update -c public-knowledge && qmd embed'], {
     detached: true,
     stdio: 'ignore',
   });
@@ -349,8 +349,8 @@ case 'reindex_knowledge': {
 **MCP tool** (in `ipc-mcp-stdio.ts`):
 ```typescript
 {
-  name: 'reindex_knowledge',
-  description: 'Trigger re-indexing of the knowledge repository after adding or updating files. Runs in background (fire-and-forget). Main group only.',
+  name: 'reindex_public_knowledge',
+  description: 'Trigger re-indexing of the public knowledge repository after adding or updating files. Runs in background (fire-and-forget). Main group only.',
   inputSchema: { type: 'object', properties: {} },
 }
 ```
@@ -359,7 +359,7 @@ case 'reindex_knowledge': {
 
 **File:** `groups/main/CLAUDE.md`
 
-Add KNOWLEDGE intent and search capabilities to the existing Brain Router prompt.
+Add PUBLIC_KNOWLEDGE intent and search capabilities to the existing Brain Router prompt.
 
 **Changes to "On Every Message" section:**
 ```markdown
@@ -367,25 +367,25 @@ Add KNOWLEDGE intent and search capabilities to the existing Brain Router prompt
 
 1. Read `/workspace/group/projects.yaml` to get the current project list
 2. Classify the message to the best-matching project using name, aliases, and brief
-3. Determine intent: CATALOG (default), EXECUTE, or KNOWLEDGE
+3. Determine intent: CATALOG (default), EXECUTE, or PUBLIC_KNOWLEDGE
 ```
 
 **New "Intent Detection" entry:**
 ```markdown
-- **KNOWLEDGE**: User wants to store or retrieve from the knowledge repository.
+- **PUBLIC_KNOWLEDGE**: User wants to store or retrieve from the public knowledge repository.
   - Store signals: "save to knowledge", "add to knowledge base", "store this",
     "remember this for reference", "knowledge:"
   - Search signals: "search knowledge", "pull from knowledge", "check knowledge base",
     "what do I know about"
 ```
 
-**New "Knowledge Mode" section:**
+**New "Public Knowledge Mode" section:**
 ```markdown
-## Knowledge Mode
+## Public Knowledge Mode
 
-### Storing Knowledge
+### Storing Public Knowledge
 
-When the user wants to save information to the knowledge vault:
+When the user wants to save information to the public knowledge vault:
 
 1. **Determine note type and placement:**
    - External entity (company, person, product, tool)? → `References/`
@@ -409,14 +409,14 @@ When the user wants to save information to the knowledge vault:
    - Pluralize categories and tags
    - YYYY-MM-DD format for all dates
    - Follow obsidian-markdown conventions for formatting
-4. Call `mcp__nanoclaw__reindex_knowledge` to update the search index
+4. Call `mcp__nanoclaw__reindex_public_knowledge` to update the search index
 5. Confirm: "Saved to knowledge → {note name} ({folder})"
 
-### Searching Knowledge
+### Searching Public Knowledge
 
-When the user asks to search the knowledge base (standalone query):
+When the user asks to search the public knowledge base (standalone query):
 
-1. Call `mcp__nanoclaw__search_knowledge` with appropriate search types:
+1. Call `mcp__nanoclaw__search_public_knowledge` with appropriate search types:
    - Use `lex` for exact terms, names, identifiers
    - Use `vec` for natural language questions
    - Combine `lex` + `vec` for best recall
@@ -424,15 +424,15 @@ When the user asks to search the knowledge base (standalone query):
 2. Summarize the results concisely
 3. Include note names as reference
 
-### Injecting Knowledge into Execute
+### Injecting Public Knowledge into Execute
 
-When the user asks to execute AND pull from knowledge:
+When the user asks to execute AND pull from public knowledge:
 
-1. Call `mcp__nanoclaw__search_knowledge` with relevant terms
+1. Call `mcp__nanoclaw__search_public_knowledge` with relevant terms
 2. Format the results as context
 3. Prepend to the execute prompt:
    ```
-   [Knowledge context from repository:]
+   [Public knowledge context from repository:]
    {search results}
 
    [Task:]
@@ -443,7 +443,7 @@ When the user asks to execute AND pull from knowledge:
 
 **New "Rules" entries:**
 ```markdown
-- When storing knowledge, always check for existing notes before creating new ones.
+- When storing public knowledge, always check for existing notes before creating new ones.
 - Link profusely — even unresolved [[wikilinks]] are valuable breadcrumbs.
 - Default note placement: References/ for entities, Clippings/ for external content, root for synthesis.
 ```
@@ -455,21 +455,21 @@ When the user asks to execute AND pull from knowledge:
 A NanoClaw setup skill (consistent with `/add-whatsapp`, `/add-discord`, `/add-telegram`) that handles:
 
 1. **Vault initialization**
-   - Clone [kepano-obsidian](https://github.com/kepano/kepano-obsidian) to `~/knowledge` (or `NANOCLAW_KNOWLEDGE_DIR`)
+   - Clone [kepano-obsidian](https://github.com/kepano/kepano-obsidian) to `~/knowledge` (or `NANOCLAW_PUBLIC_KNOWLEDGE_DIR`)
    - Open the vault in Obsidian to verify it works
    - User can customize settings/plugins in Obsidian as desired
 
 2. **qmd installation & indexing**
    - `npm install -g @tobilu/qmd`
-   - `qmd collection add ~/knowledge --name knowledge`
+   - `qmd collection add ~/knowledge --name public-knowledge`
    - `qmd embed` (initial embedding generation)
    - Verify: `qmd status`
 
 3. **NanoClaw integration**
-   - Add `KNOWLEDGE_DIR` to `src/config.ts`
-   - Add knowledge vault mounts in `src/container-runner.ts`
-   - Create `container/skills/knowledge/SKILL.md`
-   - Add `search_knowledge` and `reindex_knowledge` IPC handlers + MCP tools
+   - Add `PUBLIC_KNOWLEDGE_DIR` to `src/config.ts`
+   - Add public knowledge vault mounts in `src/container-runner.ts`
+   - Create `container/skills/public-knowledge/SKILL.md`
+   - Add `search_public_knowledge` and `reindex_public_knowledge` IPC handlers + MCP tools
    - Update Brain Router prompt in `groups/main/CLAUDE.md`
 
 4. **Build & verify**
@@ -484,26 +484,26 @@ A NanoClaw setup skill (consistent with `/add-whatsapp`, `/add-discord`, `/add-t
 ### Phase 1: Foundation
 1. Create `/add-knowledge` setup skill
 2. Run the skill to initialize vault (clone kepano-obsidian to `~/knowledge`)
-3. Add `KNOWLEDGE_DIR` to `src/config.ts`
-4. Add knowledge vault mounts to `src/container-runner.ts` (read-write for main, read-only for others)
-5. Create `container/skills/knowledge/SKILL.md` with vault conventions
+3. Add `PUBLIC_KNOWLEDGE_DIR` to `src/config.ts`
+4. Add public knowledge vault mounts to `src/container-runner.ts` (read-write for main, read-only for others)
+5. Create `container/skills/public-knowledge/SKILL.md` with vault conventions
 6. Build and verify mounts work
 
 ### Phase 2: Ingestion
-7. Add KNOWLEDGE intent to `groups/main/CLAUDE.md` (Brain Router prompt)
+7. Add PUBLIC_KNOWLEDGE intent to `groups/main/CLAUDE.md` (Brain Router prompt)
 8. Test: send "save to knowledge: Competitor X raised $50M" → verify file written correctly to vault with proper frontmatter and wikilinks
 
 ### Phase 3: Search
-9. Install qmd, add knowledge collection, build embeddings
-10. Add `search_knowledge` IPC handler in `src/ipc.ts` (uses `qmd query` CLI)
-11. Add `search_knowledge` MCP tool in `container/agent-runner/src/ipc-mcp-stdio.ts`
-12. Add `reindex_knowledge` IPC handler + MCP tool (fire-and-forget)
+9. Install qmd, add public-knowledge collection, build embeddings
+10. Add `search_public_knowledge` IPC handler in `src/ipc.ts` (uses `qmd query` CLI)
+11. Add `search_public_knowledge` MCP tool in `container/agent-runner/src/ipc-mcp-stdio.ts`
+12. Add `reindex_public_knowledge` IPC handler + MCP tool (fire-and-forget)
 13. Update Brain Router prompt with search/inject sections
 14. Test: send "search knowledge for competitor pricing" → verify results returned
-16. Test: send "for my-project: build pricing page, pull from knowledge" → verify knowledge context injected into execute prompt
+16. Test: send "for my-project: build pricing page, pull from knowledge" → verify public knowledge context injected into execute prompt
 
 ### Phase 4: Polish
-17. Verify project agents can call `search_knowledge` when explicitly asked
+17. Verify project agents can call `search_public_knowledge` when explicitly asked
 18. Rebuild container image with updated agent-runner
 19. End-to-end test: ingest → reindex → search → inject into execute
 
@@ -511,14 +511,14 @@ A NanoClaw setup skill (consistent with `/add-whatsapp`, `/add-discord`, `/add-t
 
 ## Use Case Walkthroughs
 
-These scenarios illustrate how the knowledge repository works in practice through the Brain Router. The primary interface is Discord (Brain Router's main channel for WhatsApp/Telegram, project channels for execution).
+These scenarios illustrate how the public knowledge repository works in practice through the Brain Router. The primary interface is Discord (Brain Router's main channel for WhatsApp/Telegram, project channels for execution).
 
-### UC1: Store new knowledge (new entity)
+### UC1: Store new public knowledge (new entity)
 
 **You (Brain Router channel):**
 > save to knowledge: Acme Corp just announced they're sunsetting their free tier effective Q3 2026. Moving to a $29/seat minimum. Their CEO posted about it on LinkedIn today.
 
-**Brain Router detects** KNOWLEDGE intent (signal: "save to knowledge").
+**Brain Router detects** PUBLIC_KNOWLEDGE intent (signal: "save to knowledge").
 
 **Entity resolution:**
 - Entity: "Acme Corp" — external company → `References/`
@@ -526,7 +526,7 @@ These scenarios illustrate how the knowledge repository works in practice throug
 - Searches qmd: `{ "searches": [{ "type": "lex", "query": "\"Acme Corp\"" }] }` — no results
 - No match → create new note
 
-**Brain Router writes** `/workspace/knowledge/References/Acme Corp.md`:
+**Brain Router writes** `/workspace/public-knowledge/References/Acme Corp.md`:
 ```markdown
 ---
 created: 2026-03-13
@@ -551,19 +551,19 @@ related:
 Announced sunsetting of free tier effective Q3 2026. Moving to $29/seat minimum. CEO posted about it on LinkedIn.
 ```
 
-**Brain Router calls** `reindex_knowledge` (fire-and-forget).
+**Brain Router calls** `reindex_public_knowledge` (fire-and-forget).
 
 **You receive:**
 > Saved to knowledge → Acme Corp (References)
 
 ---
 
-### UC2: Update existing knowledge (entity resolution across sessions)
+### UC2: Update existing public knowledge (entity resolution across sessions)
 
 **You (Brain Router channel), two weeks later:**
 > knowledge: Acme Q1 earnings are out. Revenue up 34% YoY, 12k paying customers. They're investing heavily in AI features.
 
-**Brain Router detects** KNOWLEDGE intent. Note the user said "Acme", not "Acme Corp".
+**Brain Router detects** PUBLIC_KNOWLEDGE intent. Note the user said "Acme", not "Acme Corp".
 
 **Entity resolution:**
 - Entity: "Acme" — external company → `References/`
@@ -571,7 +571,7 @@ Announced sunsetting of free tier effective Q3 2026. Moving to $29/seat minimum.
 - Searches qmd: `{ "searches": [{ "type": "lex", "query": "\"Acme\"" }] }` — returns `Acme Corp.md`
 - Clear match → read existing file, append
 
-**Brain Router appends** to `/workspace/knowledge/References/Acme Corp.md`:
+**Brain Router appends** to `/workspace/public-knowledge/References/Acme Corp.md`:
 ```markdown
 ### 2026-03-27
 
@@ -580,7 +580,7 @@ Q1 earnings: revenue up 34% YoY, 12k paying customers. Investing heavily in AI f
 
 Also adds `earnings` to tags and `[[AI features]]` to related (unresolved wikilink — breadcrumb for future).
 
-**Brain Router calls** `reindex_knowledge`.
+**Brain Router calls** `reindex_public_knowledge`.
 
 **You receive:**
 > Updated knowledge → Acme Corp (References)
@@ -592,9 +592,9 @@ Also adds `earnings` to tags and `[[AI features]]` to related (unresolved wikili
 **You (Brain Router channel):**
 > save to knowledge: https://example.com/blog/state-of-saas-pricing-2026
 
-**Brain Router detects** KNOWLEDGE intent. Sees a URL. Uses defuddle (from obsidian-skills) to extract clean markdown from the page. This is someone else's content → `Clippings/`.
+**Brain Router detects** PUBLIC_KNOWLEDGE intent. Sees a URL. Uses defuddle (from obsidian-skills) to extract clean markdown from the page. This is someone else's content → `Clippings/`.
 
-**Brain Router writes** `/workspace/knowledge/Clippings/State of SaaS Pricing 2026.md`:
+**Brain Router writes** `/workspace/public-knowledge/Clippings/State of SaaS Pricing 2026.md`:
 ```markdown
 ---
 created: 2026-03-13
@@ -627,9 +627,9 @@ related:
 **You (Brain Router channel):**
 > save to knowledge: After looking at Acme, Globex, and Initech pricing, I think the market is converging on $25-35/seat for mid-market. Free tiers are disappearing. Our positioning should emphasize the free tier as a differentiator while it still exists.
 
-**Brain Router detects** KNOWLEDGE intent. This isn't about an external entity — it's your own analysis → vault root.
+**Brain Router detects** PUBLIC_KNOWLEDGE intent. This isn't about an external entity — it's your own analysis → vault root.
 
-**Brain Router writes** `/workspace/knowledge/Mid-market pricing convergence.md`:
+**Brain Router writes** `/workspace/public-knowledge/Mid-market pricing convergence.md`:
 ```markdown
 ---
 created: 2026-03-13
@@ -661,14 +661,14 @@ Note the wikilinks to `[[Globex]]` and `[[Initech]]` — these don't exist yet a
 
 ---
 
-### UC5: Search knowledge from Brain Router
+### UC5: Search public knowledge from Brain Router
 
 **You (Brain Router channel):**
 > what do I know about competitor pricing?
 
-**Brain Router detects** KNOWLEDGE search intent (signal: "what do I know about").
+**Brain Router detects** PUBLIC_KNOWLEDGE search intent (signal: "what do I know about").
 
-**Brain Router calls** `search_knowledge`:
+**Brain Router calls** `search_public_knowledge`:
 ```json
 {
   "searches": [
@@ -682,7 +682,7 @@ Note the wikilinks to `[[Globex]]` and `[[Initech]]` — these don't exist yet a
 **qmd returns** matching documents ranked by relevance: Acme Corp.md, Mid-market pricing convergence.md, State of SaaS Pricing 2026.md.
 
 **You receive:**
-> **Knowledge search: competitor pricing**
+> **Public knowledge search: competitor pricing**
 >
 > - **Acme Corp** (References) — Sunsetted free tier Q3 2026, moving to $29/seat. Revenue up 34% YoY.
 > - **Mid-market pricing convergence** (root) — Market converging on $25-35/seat. Free tiers disappearing. Our free tier is a differentiator.
@@ -690,14 +690,14 @@ Note the wikilinks to `[[Globex]]` and `[[Initech]]` — these don't exist yet a
 
 ---
 
-### UC6: Execute with knowledge injection
+### UC6: Execute with public knowledge injection
 
 **You (Brain Router channel):**
 > for saas-mvp: build the pricing page, pull from knowledge about competitor pricing and our positioning
 
-**Brain Router detects** EXECUTE intent + knowledge search signal ("pull from knowledge").
+**Brain Router detects** EXECUTE intent + public knowledge search signal ("pull from knowledge").
 
-**Step 1 — Search knowledge:**
+**Step 1 — Search public knowledge:**
 ```json
 {
   "searches": [
@@ -712,7 +712,7 @@ Note the wikilinks to `[[Globex]]` and `[[Initech]]` — these don't exist yet a
 ```
 target_group_folder: project:saas-mvp
 prompt: |
-  [Knowledge context from repository:]
+  [Public knowledge context from repository:]
 
   ## Acme Corp (References/Acme Corp.md)
   Sunsetted free tier Q3 2026. Moving to $29/seat minimum.
@@ -733,18 +733,18 @@ prompt: |
 **You receive (in Brain Router channel):**
 > Executing in **saas-mvp** → <#1234567890>
 
-The saas-mvp project agent picks up the task in its Discord channel with full knowledge context already in the prompt. It builds the pricing page with competitive awareness baked in.
+The saas-mvp project agent picks up the task in its Discord channel with full public knowledge context already in the prompt. It builds the pricing page with competitive awareness baked in.
 
 ---
 
-### UC7: Project agent searches knowledge directly
+### UC7: Project agent searches public knowledge directly
 
 **You (in Discord #saas-mvp channel):**
-> @Andy what do my competitors charge for API access? check the knowledge repo
+> @Andy what do my competitors charge for API access? check the public knowledge repo
 
-The saas-mvp project agent receives this. It sees "check the knowledge repo" — the explicit signal to search.
+The saas-mvp project agent receives this. It sees "check the public knowledge repo" — the explicit signal to search.
 
-**Agent calls** `search_knowledge`:
+**Agent calls** `search_public_knowledge`:
 ```json
 {
   "searches": [
@@ -758,16 +758,16 @@ The saas-mvp project agent receives this. It sees "check the knowledge repo" —
 
 The IPC flow: agent writes task file → host picks up → host calls qmd HTTP API → results returned to agent.
 
-The agent also has the vault mounted read-only at `/workspace/knowledge`, so if the search results reference specific files, it can read `/workspace/knowledge/References/Acme Corp.md` for full context.
+The agent also has the vault mounted read-only at `/workspace/public-knowledge`, so if the search results reference specific files, it can read `/workspace/public-knowledge/References/Acme Corp.md` for full context.
 
 **Agent responds (in Discord #saas-mvp):**
-> Based on the knowledge repo:
+> Based on the public knowledge repo:
 > - **Acme Corp** charges $29/seat base, API access is an add-on at $99/mo
 > - No API pricing info on file for Globex or Initech yet
 >
 > Want me to research their API pricing and save it to knowledge?
 
-Note: the project agent can *read* the vault and *search* it, but cannot *write* to it (read-only mount). Storing new knowledge goes through the Brain Router.
+Note: the project agent can *read* the vault and *search* it, but cannot *write* to it (read-only mount). Storing new public knowledge goes through the Brain Router.
 
 ---
 
@@ -786,7 +786,7 @@ Note: the project agent can *read* the vault and *search* it, but cannot *write*
 **You respond:**
 > yes, and add a Pricing section and a Key Metrics section too
 
-**Brain Router writes** `/workspace/knowledge/Templates/Company.md`:
+**Brain Router writes** `/workspace/public-knowledge/Templates/Company.md`:
 ```markdown
 ---
 created: {{date}}
@@ -843,17 +843,17 @@ After saving, it notices the last 3 company notes have all included funding info
 
 ---
 
-### UC10: Mixed intent (knowledge + execute)
+### UC10: Mixed intent (public knowledge + execute)
 
 **You (Brain Router channel):**
 > for saas-mvp: the design team shared new mockups for the dashboard. Also save to knowledge that our design system uses 8px grid spacing and Inter font.
 
 **Brain Router detects two intents** in one message:
 - EXECUTE: dashboard mockups task → route to saas-mvp
-- KNOWLEDGE: design system details → save to vault
+- PUBLIC_KNOWLEDGE: design system details → save to vault
 
 **Brain Router does both:**
-1. Writes to knowledge — creates or updates `Design system.md` in the vault root
+1. Writes to public knowledge — creates or updates `Design system.md` in the vault root
 2. Dispatches the dashboard mockup task to saas-mvp via `execute_in_group`
 
 **You receive:**
@@ -862,7 +862,7 @@ After saving, it notices the last 3 company notes have all included funding info
 
 ---
 
-### UC11: Bulk knowledge dump
+### UC11: Bulk public knowledge dump
 
 **You (Brain Router channel):**
 > save to knowledge: Here's everything from the competitor analysis meeting today:
@@ -872,7 +872,7 @@ After saving, it notices the last 3 company notes have all included funding info
 > - Market consensus is PLG is dead for enterprise, sales-led is back
 > - Our win rate against Acme is 67%, against Globex 45%
 
-**Brain Router detects** KNOWLEDGE intent. This is a multi-entity dump spanning multiple entities plus your own analysis.
+**Brain Router detects** PUBLIC_KNOWLEDGE intent. This is a multi-entity dump spanning multiple entities plus your own analysis.
 
 **Entity resolution (for each entity mentioned):**
 - "Acme" → matches `References/Acme Corp.md` → append
@@ -885,7 +885,7 @@ After saving, it notices the last 3 company notes have all included funding info
 2. Appends to `References/Globex.md` — healthcare pivot
 3. Appends to `References/Initech.md` — new CTO from AWS
 4. Creates `Competitive landscape Q1 2026.md` in root — market consensus, win rates
-5. Calls `reindex_knowledge` once at the end
+5. Calls `reindex_public_knowledge` once at the end
 
 **You receive:**
 > Updated knowledge:
@@ -900,12 +900,12 @@ After saving, it notices the last 3 company notes have all included funding info
 
 ## Decisions
 
-1. **qmd CLI (not HTTP server)** — qmd supports CLI, MCP stdio, and MCP-over-HTTP modes. We use the CLI (`qmd query ... --json`) because it requires no background daemon, no open ports, and no launchd service — matching NanoClaw's zero-open-ports architecture. The host IPC handler spawns `qmd query` as a subprocess for each search request. Cold-start latency (~1-3s for vector search) is negligible for a personal knowledge base searched via messaging a few times per day.
+1. **qmd CLI (not HTTP server)** — qmd supports CLI, MCP stdio, and MCP-over-HTTP modes. We use the CLI (`qmd query ... --json`) because it requires no background daemon, no open ports, and no launchd service — matching NanoClaw's zero-open-ports architecture. The host IPC handler spawns `qmd query` as a subprocess for each search request. Cold-start latency (~1-3s for vector search) is negligible for a personal public knowledge base searched via messaging a few times per day.
 
-2. **Fire-and-forget reindexing** — After the Brain Router writes a knowledge file, `reindex_knowledge` spawns `qmd update -c knowledge && qmd embed` as a detached background process. The agent doesn't wait. For a personal vault this is fast enough that the index is current by the next search.
+2. **Fire-and-forget reindexing** — After the Brain Router writes a public knowledge file, `reindex_public_knowledge` spawns `qmd update -c public-knowledge && qmd embed` as a detached background process. The agent doesn't wait. For a personal vault this is fast enough that the index is current by the next search.
 
 3. **Setup skill (`/add-knowledge`)** — Consistent with NanoClaw's pattern of `/add-whatsapp`, `/add-discord`, etc. Handles vault creation, qmd installation, and NanoClaw wiring.
 
-4. **Emergent templates** — Start with whatever ships in the kepano-obsidian vault. The knowledge skill teaches conventions (frontmatter schema, folder placement, linking rules) and includes a template evolution process: after 3+ notes of the same type share a recurring structure, the Brain Router proposes creating a template. Templates are never created silently — always proposed and confirmed. Existing templates can also be refined when usage patterns drift.
+4. **Emergent templates** — Start with whatever ships in the kepano-obsidian vault. The public knowledge skill teaches conventions (frontmatter schema, folder placement, linking rules) and includes a template evolution process: after 3+ notes of the same type share a recurring structure, the Brain Router proposes creating a template. Templates are never created silently — always proposed and confirmed. Existing templates can also be refined when usage patterns drift.
 
 5. **Obsidian CLI is out of scope** — qmd is the primary and sole search path. Obsidian's built-in search is too rudimentary. If an advanced search community plugin is later installed in Obsidian, the CLI could serve as a manual backup, but that's a future consideration outside this plan.
