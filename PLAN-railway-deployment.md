@@ -277,9 +277,51 @@ These are steps for the user, not code changes.
   - `NANOCLAW_PUBLIC_KNOWLEDGE_DIR=/data/public-knowledge`
   - `NANOCLAW_SECOND_BRAIN_DIR=/data/second-brain`
 
+### Optional: Real-time device sync with Self-hosted LiveSync
+
+Remotely Save handles the Obsidian ↔ R2 ↔ Railway pipeline, but it syncs on a timer (every few minutes). For real-time sync between your own Obsidian devices (laptop ↔ phone ↔ tablet), you can run [Self-hosted LiveSync](https://github.com/vrtmrz/obsidian-livesync) alongside Remotely Save. They solve different problems and coexist without conflict.
+
+**Why two plugins?** LiveSync uses CouchDB for real-time replication between Obsidian instances — edits appear on other devices within seconds. But CouchDB stores data in its own internal format, not as plain files, so Railway can't use it (Railway needs plain markdown on disk for qmd indexing). Remotely Save writes plain files to R2, which rclone can pull. Use both: LiveSync for device-to-device, Remotely Save for device-to-Railway.
+
+**Setup (per vault, on each device):**
+
+1. **Stand up a CouchDB instance** — one of:
+   - [Fly.io](https://fly.io) free tier (recommended — low-latency, always-on)
+   - [IBM Cloudant](https://www.ibm.com/cloud/cloudant) free tier
+   - Self-host on any VPS: `docker run -d -p 5984:5984 -e COUCHDB_USER=admin -e COUCHDB_PASSWORD=<password> couchdb`
+
+2. **Install LiveSync** in Obsidian on each device:
+   - Community plugins → search "Self-hosted LiveSync" → install
+   - Configure CouchDB URI: `https://<user>:<password>@<your-couchdb-host>:5984`
+   - Database name: use a unique name per vault (e.g., `public-knowledge`, `second-brain`)
+   - Enable "Live Sync" mode (not periodic — that's the whole point)
+
+3. **Install Remotely Save** on the same vault (same device):
+   - Configure S3-compatible backend pointing to R2 (as described above)
+   - Set sync interval to 5 min
+
+4. **Exclude each plugin's metadata from the other:**
+   - In Remotely Save settings → add `.obsidian/plugins/obsidian-livesync/` to exclude patterns
+   - In LiveSync settings → add `.remotely-save/` to exclude patterns
+   - This prevents sync loops where one plugin picks up the other's internal state
+
+**Data flow:**
+```
+Phone (Obsidian)  ←──LiveSync/CouchDB──→  Laptop (Obsidian)
+       │                                          │
+       └──Remotely Save──→  R2  ←──Remotely Save──┘
+                             │
+                        rclone sync
+                             │
+                          Railway
+```
+
+Both devices push to R2 via Remotely Save on a timer. LiveSync handles the real-time device-to-device path independently. Railway only pulls from R2 — it never talks to CouchDB.
+
 ### Conflict handling (both vaults)
 
 - remotely-save metadata in `.remotely-save/` is excluded from rclone sync (both directions)
+- LiveSync metadata in `.obsidian/plugins/obsidian-livesync/` is excluded from Remotely Save
 - qmd index in `.qmd/` is excluded when pushing back to R2
 - `keep_newer` conflict resolution — single user, last-write-wins is safe
 - Conflicts are rare: Obsidian writes from your device, Brain Router writes from Railway, unlikely to touch same file simultaneously
