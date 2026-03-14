@@ -5,6 +5,7 @@ import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
+  IS_RAILWAY,
   POLL_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
@@ -486,6 +487,10 @@ function recoverPendingMessages(): void {
 }
 
 function ensureContainerSystemRunning(): void {
+  if (IS_RAILWAY) {
+    logger.info('Running on Railway — skipping container runtime checks');
+    return;
+  }
   ensureContainerRuntimeRunning();
   cleanupOrphans();
 }
@@ -570,7 +575,7 @@ async function main(): Promise<void> {
 
       // Brain Router passthrough commands — inject as a prefixed message
       // into the main group for the Brain Router to classify.
-      const passthroughCommands = ['catalog', 'execute', 'knowledge', 'ask'];
+      const passthroughCommands = ['catalog', 'execute', 'knowledge', 'second-brain', 'ask'];
       if (passthroughCommands.includes(command)) {
         // Find the Brain Router group (folder 'main') — prefer it over other
         // isMain groups since the Brain Router prompt handles intent routing.

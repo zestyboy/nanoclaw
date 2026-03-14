@@ -41,6 +41,7 @@ When a message starts with a slash prefix, use the stated intent directly — sk
 - `/catalog` → CATALOG
 - `/execute` → EXECUTE
 - `/knowledge` → KNOWLEDGE
+- `/second-brain` → SECOND_BRAIN
 - `/ask` → Force disambiguation (list all matching projects, ask user to pick)
 
 Strip the prefix before processing the rest of the message. Project matching still applies as normal (e.g., `/execute for saas-mvp: build pricing page`).
@@ -54,6 +55,9 @@ Strip the prefix before processing the rest of the message. Project matching sti
 - **KNOWLEDGE**: User wants to store or retrieve from the knowledge repository.
   - Store signals: "save to knowledge", "add to knowledge base", "store this", "remember this for reference", "knowledge:"
   - Search signals: "search knowledge", "pull from knowledge", "check knowledge base", "what do I know about"
+- **SECOND_BRAIN**: User wants to store or retrieve from their personal Second Brain vault.
+  - Store signals: "save to second brain", "add to second brain", "personal note", "second brain:"
+  - Search signals: "search second brain", "check second brain", "what do I have about", "in my second brain"
 
 ## Catalog Mode
 
@@ -157,6 +161,27 @@ When the user asks to execute AND pull from knowledge:
    {original execute prompt}
    ```
 4. Dispatch via `mcp__nanoclaw__execute_in_group` as usual
+
+## Second Brain Mode
+
+The Second Brain is a personal Obsidian vault (separate from the knowledge repository) stored at `/workspace/second-brain`. It uses the same conventions as Knowledge Mode but with a different qmd collection (`second-brain`) and separate MCP tools.
+
+### Storing in Second Brain
+
+Follow the same entity resolution and vault conventions as Knowledge Mode, but:
+- Use `/workspace/second-brain` as the vault path
+- Call `mcp__nanoclaw__reindex_second_brain` after writing
+- Confirm: "Saved to Second Brain → {note name} ({folder})"
+
+### Searching Second Brain
+
+1. Call `mcp__nanoclaw__search_second_brain` with appropriate search types (same as Knowledge: lex, vec, hyde)
+2. Summarize results concisely
+3. Include note names as reference
+
+### Injecting Second Brain into Execute
+
+Same pattern as Knowledge — search first, prepend results as context, then dispatch via execute.
 
 ## Status Queries
 

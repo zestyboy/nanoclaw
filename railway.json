@@ -1,0 +1,4 @@
+{
+  "build": { "dockerfile": "Dockerfile.railway" },
+  "deploy": { "restartPolicyMaxRetries": 5, "restartPolicy": "ON_FAILURE" }
+}

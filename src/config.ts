@@ -8,6 +8,9 @@ import { readEnvFile } from './env.js';
 // by the credential proxy (credential-proxy.ts), never exposed to containers.
 const envConfig = readEnvFile(['ASSISTANT_NAME', 'ASSISTANT_HAS_OWN_NUMBER']);
 
+export const IS_RAILWAY = !!process.env.RAILWAY_ENVIRONMENT;
+export const RAILWAY_DATA_DIR = '/data';
+
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
 export const ASSISTANT_HAS_OWN_NUMBER =
@@ -41,7 +44,10 @@ export const PROJECTS_DIR =
   path.join(HOME_DIR, 'development', 'nanoclaw-projects');
 export const KNOWLEDGE_DIR =
   process.env.NANOCLAW_KNOWLEDGE_DIR ||
-  path.join(HOME_DIR, 'development', 'nanoclaw-knowledge');
+  (IS_RAILWAY ? '/data/knowledge' : path.join(HOME_DIR, 'development', 'nanoclaw-knowledge'));
+export const SECOND_BRAIN_DIR =
+  process.env.NANOCLAW_SECOND_BRAIN_DIR ||
+  (IS_RAILWAY ? '/data/second-brain' : '');
 
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';

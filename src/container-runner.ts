@@ -14,8 +14,10 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
+  IS_RAILWAY,
   KNOWLEDGE_DIR,
   PROJECTS_DIR,
+  SECOND_BRAIN_DIR,
   TIMEZONE,
 } from './config.js';
 import {
@@ -118,6 +120,15 @@ function buildVolumeMounts(
         readonly: false,
       });
     }
+
+    // Main gets writable access to Second Brain vault
+    if (SECOND_BRAIN_DIR && fs.existsSync(SECOND_BRAIN_DIR)) {
+      mounts.push({
+        hostPath: SECOND_BRAIN_DIR,
+        containerPath: '/workspace/second-brain',
+        readonly: false,
+      });
+    }
   } else {
     // Other groups only get their own folder
     mounts.push({
@@ -142,6 +153,15 @@ function buildVolumeMounts(
       mounts.push({
         hostPath: KNOWLEDGE_DIR,
         containerPath: '/workspace/knowledge',
+        readonly: true,
+      });
+    }
+
+    // Non-main groups get read-only access to Second Brain vault
+    if (SECOND_BRAIN_DIR && fs.existsSync(SECOND_BRAIN_DIR)) {
+      mounts.push({
+        hostPath: SECOND_BRAIN_DIR,
+        containerPath: '/workspace/second-brain',
         readonly: true,
       });
     }
@@ -308,6 +328,11 @@ export async function runContainerAgent(
   onProcess: (proc: ChildProcess, containerName: string) => void,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<ContainerOutput> {
+  if (IS_RAILWAY) {
+    const { runRailwayAgent } = await import('./railway-runner.js');
+    return runRailwayAgent(group, input, onProcess, onOutput);
+  }
+
   const startTime = Date.now();
 
   const groupDir = resolveGroupFolderPath(group.folder);

@@ -4,7 +4,7 @@ import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 import yaml from 'yaml';
 
-import { DATA_DIR, GROUPS_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { DATA_DIR, GROUPS_DIR, IPC_POLL_INTERVAL, IS_RAILWAY, SECOND_BRAIN_DIR, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
 import {
   createTask,
@@ -196,11 +196,12 @@ export async function processTaskIpc(
     brief?: string;
     aliases?: string;
     host_path?: string;
-    // For search_knowledge
+    // For search_knowledge / search_second_brain
     searches?: Array<{ type: string; query: string }>;
     intent?: string;
     limit?: number;
     resultId?: string;
+    collection?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -598,15 +599,100 @@ export async function processTaskIpc(
         );
         break;
       }
-      // Fire-and-forget: update index then regenerate embeddings
+      // Fire-and-forget: update index, regenerate embeddings, then sync to R2 if on Railway
       const { spawn: spawnChild } = await import('child_process');
-      const child = spawnChild(
-        'sh',
-        ['-c', 'qmd update -c knowledge && qmd embed'],
-        { detached: true, stdio: 'ignore' },
-      );
+      const reindexCmd = IS_RAILWAY && process.env.R2_KNOWLEDGE_BUCKET
+        ? `qmd update -c knowledge && qmd embed && rclone sync /data/knowledge r2:${process.env.R2_KNOWLEDGE_BUCKET} --exclude ".remotely-save/**" --exclude ".qmd/**"`
+        : 'qmd update -c knowledge && qmd embed';
+      const child = spawnChild('sh', ['-c', reindexCmd], {
+        detached: true,
+        stdio: 'ignore',
+      });
       child.unref();
       logger.info({ sourceGroup }, 'Knowledge reindex started in background');
+      break;
+    }
+
+    case 'search_second_brain': {
+      const {
+        searches,
+        intent,
+        limit = 10,
+        resultId: sbResultId,
+      } = data as {
+        searches: Array<{ type: string; query: string }>;
+        intent?: string;
+        limit?: number;
+        resultId?: string;
+      };
+      const sbResultDir = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup.replace(/:/g, '_'),
+        'input',
+      );
+      fs.mkdirSync(sbResultDir, { recursive: true });
+      const sbResultFileName = sbResultId
+        ? `result-${sbResultId}.json`
+        : `result-${Date.now()}.json`;
+      try {
+        const queryLines: string[] = [];
+        if (intent) queryLines.push(`intent: ${intent}`);
+        for (const s of searches) {
+          queryLines.push(`${s.type}: ${s.query}`);
+        }
+        const queryDoc = queryLines.join('\n');
+
+        const { execFileSync } = await import('child_process');
+        const output = execFileSync(
+          'qmd',
+          ['query', queryDoc, '--json', '-c', 'second-brain', '-n', String(limit)],
+          { encoding: 'utf-8', timeout: 30000 },
+        );
+        const results = JSON.parse(output);
+        fs.writeFileSync(
+          path.join(sbResultDir, sbResultFileName),
+          JSON.stringify({ success: true, results }),
+        );
+        logger.info(
+          {
+            sourceGroup,
+            resultFileName: sbResultFileName,
+            resultCount: Array.isArray(results) ? results.length : 'unknown',
+          },
+          'Second Brain search completed',
+        );
+      } catch (err) {
+        fs.writeFileSync(
+          path.join(sbResultDir, sbResultFileName),
+          JSON.stringify({
+            success: false,
+            error: 'Second Brain search failed — is qmd installed?',
+          }),
+        );
+        logger.error({ err, sourceGroup }, 'Second Brain search failed');
+      }
+      break;
+    }
+
+    case 'reindex_second_brain': {
+      if (!isMain) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized reindex_second_brain attempt blocked',
+        );
+        break;
+      }
+      const { spawn: spawnSb } = await import('child_process');
+      const sbReindexCmd = IS_RAILWAY && process.env.R2_SECOND_BRAIN_BUCKET
+        ? `qmd update -c second-brain && qmd embed && rclone sync /data/second-brain r2:${process.env.R2_SECOND_BRAIN_BUCKET} --exclude ".remotely-save/**" --exclude ".qmd/**"`
+        : 'qmd update -c second-brain && qmd embed';
+      const sbChild = spawnSb('sh', ['-c', sbReindexCmd], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      sbChild.unref();
+      logger.info({ sourceGroup }, 'Second Brain reindex started in background');
       break;
     }
 
