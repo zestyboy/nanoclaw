@@ -71,7 +71,7 @@ If the user doesn't have a bot token, tell them:
 >    - **Message Content Intent** (required to read message text)
 >    - **Server Members Intent** (optional, for member display names)
 > 6. Go to **OAuth2** > **URL Generator**:
->    - Scopes: select `bot`
+>    - Scopes: select `bot` and `applications.commands` (required for slash commands)
 >    - Bot Permissions: select `Send Messages`, `Read Message History`, `View Channels`
 >    - Copy the generated URL and open it in your browser to invite the bot to your server
 
