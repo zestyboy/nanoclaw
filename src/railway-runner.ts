@@ -363,7 +363,10 @@ export async function runRailwayAgent(
       }
 
       fs.writeFileSync(logFile, logLines.join('\n'));
-      logger.debug({ logFile, verbose: isVerbose }, 'Railway agent log written');
+      logger.debug(
+        { logFile, verbose: isVerbose },
+        'Railway agent log written',
+      );
 
       if (code !== 0) {
         logger.error(

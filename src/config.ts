@@ -44,7 +44,9 @@ export const PROJECTS_DIR =
   path.join(HOME_DIR, 'development', 'nanoclaw-projects');
 export const KNOWLEDGE_DIR =
   process.env.NANOCLAW_KNOWLEDGE_DIR ||
-  (IS_RAILWAY ? '/data/knowledge' : path.join(HOME_DIR, 'development', 'nanoclaw-knowledge'));
+  (IS_RAILWAY
+    ? '/data/knowledge'
+    : path.join(HOME_DIR, 'development', 'nanoclaw-knowledge'));
 export const SECOND_BRAIN_DIR =
   process.env.NANOCLAW_SECOND_BRAIN_DIR ||
   (IS_RAILWAY ? '/data/second-brain' : '');

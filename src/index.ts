@@ -575,7 +575,13 @@ async function main(): Promise<void> {
 
       // Brain Router passthrough commands — inject as a prefixed message
       // into the main group for the Brain Router to classify.
-      const passthroughCommands = ['catalog', 'execute', 'knowledge', 'second-brain', 'ask'];
+      const passthroughCommands = [
+        'catalog',
+        'execute',
+        'knowledge',
+        'second-brain',
+        'ask',
+      ];
       if (passthroughCommands.includes(command)) {
         // Find the Brain Router group (folder 'main') — prefer it over other
         // isMain groups since the Brain Router prompt handles intent routing.

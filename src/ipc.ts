@@ -4,7 +4,14 @@ import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 import yaml from 'yaml';
 
-import { DATA_DIR, GROUPS_DIR, IPC_POLL_INTERVAL, IS_RAILWAY, SECOND_BRAIN_DIR, TIMEZONE } from './config.js';
+import {
+  DATA_DIR,
+  GROUPS_DIR,
+  IPC_POLL_INTERVAL,
+  IS_RAILWAY,
+  SECOND_BRAIN_DIR,
+  TIMEZONE,
+} from './config.js';
 import { AvailableGroup } from './container-runner.js';
 import {
   createTask,
@@ -601,9 +608,10 @@ export async function processTaskIpc(
       }
       // Fire-and-forget: update index, regenerate embeddings, then sync to R2 if on Railway
       const { spawn: spawnChild } = await import('child_process');
-      const reindexCmd = IS_RAILWAY && process.env.R2_KNOWLEDGE_BUCKET
-        ? `qmd update -c knowledge && qmd embed && rclone sync /data/knowledge r2:${process.env.R2_KNOWLEDGE_BUCKET} --exclude ".remotely-save/**" --exclude ".qmd/**"`
-        : 'qmd update -c knowledge && qmd embed';
+      const reindexCmd =
+        IS_RAILWAY && process.env.R2_KNOWLEDGE_BUCKET
+          ? `qmd update -c knowledge && qmd embed && rclone sync /data/knowledge r2:${process.env.R2_KNOWLEDGE_BUCKET} --exclude ".remotely-save/**" --exclude ".qmd/**"`
+          : 'qmd update -c knowledge && qmd embed';
       const child = spawnChild('sh', ['-c', reindexCmd], {
         detached: true,
         stdio: 'ignore',
@@ -646,7 +654,15 @@ export async function processTaskIpc(
         const { execFileSync } = await import('child_process');
         const output = execFileSync(
           'qmd',
-          ['query', queryDoc, '--json', '-c', 'second-brain', '-n', String(limit)],
+          [
+            'query',
+            queryDoc,
+            '--json',
+            '-c',
+            'second-brain',
+            '-n',
+            String(limit),
+          ],
           { encoding: 'utf-8', timeout: 30000 },
         );
         const results = JSON.parse(output);
@@ -684,15 +700,19 @@ export async function processTaskIpc(
         break;
       }
       const { spawn: spawnSb } = await import('child_process');
-      const sbReindexCmd = IS_RAILWAY && process.env.R2_SECOND_BRAIN_BUCKET
-        ? `qmd update -c second-brain && qmd embed && rclone sync /data/second-brain r2:${process.env.R2_SECOND_BRAIN_BUCKET} --exclude ".remotely-save/**" --exclude ".qmd/**"`
-        : 'qmd update -c second-brain && qmd embed';
+      const sbReindexCmd =
+        IS_RAILWAY && process.env.R2_SECOND_BRAIN_BUCKET
+          ? `qmd update -c second-brain && qmd embed && rclone sync /data/second-brain r2:${process.env.R2_SECOND_BRAIN_BUCKET} --exclude ".remotely-save/**" --exclude ".qmd/**"`
+          : 'qmd update -c second-brain && qmd embed';
       const sbChild = spawnSb('sh', ['-c', sbReindexCmd], {
         detached: true,
         stdio: 'ignore',
       });
       sbChild.unref();
-      logger.info({ sourceGroup }, 'Second Brain reindex started in background');
+      logger.info(
+        { sourceGroup },
+        'Second Brain reindex started in background',
+      );
       break;
     }
 
