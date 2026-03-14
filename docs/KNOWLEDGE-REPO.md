@@ -191,7 +191,6 @@ Add:
 ```
 # Knowledge repository
 NANOCLAW_KNOWLEDGE_DIR=~/knowledge
-QMD_HTTP_URL=http://127.0.0.1:8181
 ```
 
 ### 4. Container Mounts
@@ -222,7 +221,7 @@ if (fs.existsSync(KNOWLEDGE_DIR)) {
 }
 ```
 
-### 5. qmd Setup & Background Service
+### 5. qmd Setup
 
 **Installation:**
 ```bash
@@ -235,65 +234,23 @@ qmd collection add ~/knowledge --name knowledge
 qmd embed
 ```
 
-**Run as HTTP server** (persistent, keeps models loaded):
+**No background service needed.** qmd is invoked via CLI (`qmd query ... --json`) on each search request. The host IPC handler spawns `qmd query` as a subprocess, parses the JSON output, and returns results to the container agent. This matches NanoClaw's zero-open-ports architecture — no HTTP server, no daemon, no launchd plist.
+
+**Tradeoff:** Each query pays a cold-start cost (~200-500ms for keyword search, 1-3s for vector/hybrid search with model loading). For a personal knowledge base searched a few times per day via messaging, this is negligible.
+
+**CLI examples:**
 ```bash
-qmd mcp --http --port 8181
+# Structured query (lex + vec)
+qmd query $'lex: competitor pricing\nvec: what pricing strategies are competitors using' \
+  --json -c knowledge -n 5
+
+# With intent disambiguation
+qmd query $'intent: API feature pricing\nlex: API access pricing' \
+  --json -c knowledge -n 5
+
+# Reindex after writing new files
+qmd update -c knowledge && qmd embed
 ```
-
-For background/daemon mode (detaches from terminal):
-```bash
-qmd mcp --http --port 8181 --daemon
-```
-
-Default port is 8181. The HTTP API endpoint:
-```bash
-curl -X POST http://localhost:8181/query \
-  -H "Content-Type: application/json" \
-  -d '{"searches": [{"type": "lex", "query": "competitor pricing"}], "collections": ["knowledge"], "limit": 5}'
-```
-
-**Background service (launchd):**
-
-Create `~/Library/LaunchAgents/com.nanoclaw.qmd.plist`:
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.nanoclaw.qmd</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/opt/homebrew/bin/qmd</string>
-    <string>mcp</string>
-    <string>--http</string>
-    <string>--port</string>
-    <string>8181</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
-    <key>HOME</key>
-    <string>/Users/niven</string>
-  </dict>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>/tmp/qmd.log</string>
-  <key>StandardErrorPath</key>
-  <string>/tmp/qmd.err</string>
-</dict>
-</plist>
-```
-
-**Note:** The plist must use the full path to `qmd` (find with `which qmd`) and set `PATH`/`HOME` environment variables since launchd doesn't inherit the user's shell environment.
-
-**Why HTTP and not qmd's MCP stdio mode:**
-qmd supports both MCP stdio and MCP-over-HTTP modes. We use MCP-over-HTTP because NanoClaw containers communicate with the host exclusively through IPC files — there's no MCP stdio bridge from container to host services. Using qmd's HTTP API through the existing IPC handler pattern keeps everything within the NanoClaw framework. The host process calls qmd's HTTP endpoint on behalf of the container agent, same as how `execute_in_group` and `create_project` work.
 
 ### 6. `search_knowledge` MCP Tool
 
@@ -337,7 +294,7 @@ Add a new MCP tool available to all groups:
 **IPC flow:**
 1. Agent calls `search_knowledge` MCP tool
 2. Tool writes IPC task file with `type: 'search_knowledge'`
-3. Host IPC handler picks it up, calls qmd HTTP endpoint at `POST /query`
+3. Host IPC handler picks it up, runs `qmd query ... --json -c knowledge` via CLI
 4. Results written back to IPC response file
 5. Agent receives search results as structured JSON
 
@@ -347,22 +304,24 @@ Add a new MCP tool available to all groups:
 case 'search_knowledge': {
   const { searches, intent, limit = 10 } = data;
   try {
-    const qmdUrl = process.env.QMD_HTTP_URL || 'http://127.0.0.1:8181';
-    const body: Record<string, unknown> = {
-      searches,
-      collections: ['knowledge'],
-      limit,
-    };
-    if (intent) body.intent = intent;
-    const response = await fetch(`${qmdUrl}/query`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const results = await response.json();
+    // Build qmd structured query document from searches array
+    const queryLines: string[] = [];
+    if (intent) queryLines.push(`intent: ${intent}`);
+    for (const s of searches) {
+      queryLines.push(`${s.type}: ${s.query}`);
+    }
+    const queryDoc = queryLines.join('\n');
+
+    const { execFileSync } = await import('child_process');
+    const output = execFileSync(
+      'qmd',
+      ['query', queryDoc, '--json', '-c', 'knowledge', '-n', String(limit)],
+      { encoding: 'utf-8', timeout: 30000 },
+    );
+    const results = JSON.parse(output);
     return { success: true, results };
   } catch (err) {
-    return { success: false, error: 'Knowledge search unavailable — is qmd running?' };
+    return { success: false, error: 'Knowledge search failed — is qmd installed?' };
   }
 }
 ```
@@ -376,17 +335,14 @@ Triggered after the Brain Router writes a new knowledge file. Runs as fire-and-f
 ```typescript
 case 'reindex_knowledge': {
   // Main-only: only the Brain Router should trigger reindexing
-  if (!sourceGroup?.isMain) {
-    return { success: false, error: 'Only main group can trigger reindex' };
-  }
-  // Fire-and-forget: spawn background process, don't await
+  if (!isMain) break;
+  // Fire-and-forget: update index then regenerate embeddings
   const { spawn } = await import('child_process');
-  const child = spawn('qmd', ['embed'], {
+  const child = spawn('sh', ['-c', 'qmd update -c knowledge && qmd embed'], {
     detached: true,
     stdio: 'ignore',
   });
   child.unref();
-  return { success: true, message: 'Reindex started in background' };
 }
 ```
 
@@ -511,18 +467,12 @@ A NanoClaw setup skill (consistent with `/add-whatsapp`, `/add-discord`, `/add-t
 
 3. **NanoClaw integration**
    - Add `KNOWLEDGE_DIR` to `src/config.ts`
-   - Add `QMD_HTTP_URL` to `.env`
    - Add knowledge vault mounts in `src/container-runner.ts`
    - Create `container/skills/knowledge/SKILL.md`
    - Add `search_knowledge` and `reindex_knowledge` IPC handlers + MCP tools
    - Update Brain Router prompt in `groups/main/CLAUDE.md`
 
-4. **Background service**
-   - Create `~/Library/LaunchAgents/com.nanoclaw.qmd.plist`
-   - `launchctl load ~/Library/LaunchAgents/com.nanoclaw.qmd.plist`
-   - Verify: `curl http://127.0.0.1:8181/status` (or equivalent health check)
-
-5. **Build & verify**
+4. **Build & verify**
    - `npm run build`
    - Rebuild container: `./container/build.sh`
    - Restart NanoClaw
@@ -545,12 +495,11 @@ A NanoClaw setup skill (consistent with `/add-whatsapp`, `/add-discord`, `/add-t
 
 ### Phase 3: Search
 9. Install qmd, add knowledge collection, build embeddings
-10. Add `search_knowledge` IPC handler in `src/ipc.ts`
+10. Add `search_knowledge` IPC handler in `src/ipc.ts` (uses `qmd query` CLI)
 11. Add `search_knowledge` MCP tool in `container/agent-runner/src/ipc-mcp-stdio.ts`
 12. Add `reindex_knowledge` IPC handler + MCP tool (fire-and-forget)
 13. Update Brain Router prompt with search/inject sections
-14. Set up qmd as launchd background service
-15. Test: send "search knowledge for competitor pricing" → verify results returned
+14. Test: send "search knowledge for competitor pricing" → verify results returned
 16. Test: send "for my-project: build pricing page, pull from knowledge" → verify knowledge context injected into execute prompt
 
 ### Phase 4: Polish
@@ -951,11 +900,11 @@ After saving, it notices the last 3 company notes have all included funding info
 
 ## Decisions
 
-1. **qmd HTTP API (not MCP mode)** — qmd supports both HTTP and MCP server modes. We use HTTP because NanoClaw containers communicate with the host via IPC files, not MCP transport. The host process proxies search requests from containers to qmd's HTTP API at `POST /query`. This keeps everything within NanoClaw's existing IPC framework.
+1. **qmd CLI (not HTTP server)** — qmd supports CLI, MCP stdio, and MCP-over-HTTP modes. We use the CLI (`qmd query ... --json`) because it requires no background daemon, no open ports, and no launchd service — matching NanoClaw's zero-open-ports architecture. The host IPC handler spawns `qmd query` as a subprocess for each search request. Cold-start latency (~1-3s for vector search) is negligible for a personal knowledge base searched via messaging a few times per day.
 
-2. **Fire-and-forget reindexing** — After the Brain Router writes a knowledge file, `reindex_knowledge` spawns `qmd embed` as a detached background process. The agent doesn't wait. For a personal vault this is fast enough that the index is current by the next search.
+2. **Fire-and-forget reindexing** — After the Brain Router writes a knowledge file, `reindex_knowledge` spawns `qmd update -c knowledge && qmd embed` as a detached background process. The agent doesn't wait. For a personal vault this is fast enough that the index is current by the next search.
 
-3. **Setup skill (`/add-knowledge`)** — Consistent with NanoClaw's pattern of `/add-whatsapp`, `/add-discord`, etc. Handles vault creation, qmd installation, NanoClaw wiring, and background service setup.
+3. **Setup skill (`/add-knowledge`)** — Consistent with NanoClaw's pattern of `/add-whatsapp`, `/add-discord`, etc. Handles vault creation, qmd installation, and NanoClaw wiring.
 
 4. **Emergent templates** — Start with whatever ships in the kepano-obsidian vault. The knowledge skill teaches conventions (frontmatter schema, folder placement, linking rules) and includes a template evolution process: after 3+ notes of the same type share a recurring structure, the Brain Router proposes creating a template. Templates are never created silently — always proposed and confirmed. Existing templates can also be refined when usage patterns drift.
 

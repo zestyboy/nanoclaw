@@ -549,23 +549,21 @@ export async function processTaskIpc(
         ? `result-${taskResultId}.json`
         : `result-${Date.now()}.json`;
       try {
-        const envVars = readEnvFile(['QMD_HTTP_URL']);
-        const qmdUrl =
-          process.env.QMD_HTTP_URL ||
-          envVars.QMD_HTTP_URL ||
-          'http://127.0.0.1:8181';
-        const body: Record<string, unknown> = {
-          searches,
-          collections: ['knowledge'],
-          limit,
-        };
-        if (intent) body.intent = intent;
-        const response = await fetch(`${qmdUrl}/query`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const results = await response.json();
+        // Build qmd structured query document from searches array
+        const queryLines: string[] = [];
+        if (intent) queryLines.push(`intent: ${intent}`);
+        for (const s of searches) {
+          queryLines.push(`${s.type}: ${s.query}`);
+        }
+        const queryDoc = queryLines.join('\n');
+
+        const { execFileSync } = await import('child_process');
+        const output = execFileSync(
+          'qmd',
+          ['query', queryDoc, '--json', '-c', 'knowledge', '-n', String(limit)],
+          { encoding: 'utf-8', timeout: 30000 },
+        );
+        const results = JSON.parse(output);
         fs.writeFileSync(
           path.join(resultDir, resultFileName),
           JSON.stringify({ success: true, results }),
@@ -583,7 +581,7 @@ export async function processTaskIpc(
           path.join(resultDir, resultFileName),
           JSON.stringify({
             success: false,
-            error: 'Knowledge search unavailable — is qmd running?',
+            error: 'Knowledge search failed — is qmd installed?',
           }),
         );
         logger.error({ err, sourceGroup }, 'Knowledge search failed');
@@ -600,12 +598,13 @@ export async function processTaskIpc(
         );
         break;
       }
-      // Fire-and-forget: spawn background process, don't await
+      // Fire-and-forget: update index then regenerate embeddings
       const { spawn: spawnChild } = await import('child_process');
-      const child = spawnChild('qmd', ['embed'], {
-        detached: true,
-        stdio: 'ignore',
-      });
+      const child = spawnChild(
+        'sh',
+        ['-c', 'qmd update -c knowledge && qmd embed'],
+        { detached: true, stdio: 'ignore' },
+      );
       child.unref();
       logger.info({ sourceGroup }, 'Knowledge reindex started in background');
       break;

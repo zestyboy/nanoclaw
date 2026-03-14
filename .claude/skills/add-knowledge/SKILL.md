@@ -6,7 +6,7 @@ user_invocable: true
 
 # Add Knowledge Repository
 
-This skill sets up the knowledge repository system. The code changes (config, mounts, IPC handlers, MCP tools, Brain Router prompt, container skill) are already applied. This skill handles the external setup: vault initialization, qmd installation, and background service.
+This skill sets up the knowledge repository system. The code changes (config, mounts, IPC handlers, MCP tools, Brain Router prompt, container skill) are already applied. This skill handles the external setup: vault initialization and qmd installation.
 
 ## Phase 1: Vault Initialization
 
@@ -62,81 +62,10 @@ qmd embed
 
 ```bash
 qmd status
+qmd query "test" --json -c knowledge -n 1
 ```
 
-## Phase 3: Environment Variables
-
-### Add to .env
-
-Append to the project `.env` file if not already present:
-
-```bash
-# Check and add QMD_HTTP_URL
-if ! grep -q 'QMD_HTTP_URL' .env 2>/dev/null; then
-  echo -e '\n# Knowledge repository\nQMD_HTTP_URL=http://127.0.0.1:8181' >> .env
-fi
-```
-
-## Phase 4: Background Service
-
-### Create launchd plist (macOS)
-
-Find the actual qmd binary path with `which qmd` and use the full path in ProgramArguments.
-
-Write `~/Library/LaunchAgents/com.nanoclaw.qmd.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.nanoclaw.qmd</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/opt/homebrew/bin/qmd</string>
-    <string>mcp</string>
-    <string>--http</string>
-    <string>--port</string>
-    <string>8181</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
-    <key>HOME</key>
-    <string>/Users/niven</string>
-  </dict>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>/tmp/qmd.log</string>
-  <key>StandardErrorPath</key>
-  <string>/tmp/qmd.err</string>
-</dict>
-</plist>
-```
-
-**Important:** launchd doesn't inherit the user's shell environment. The plist must set `PATH` (so qmd can find `node`) and `HOME` (so qmd finds its cache/index).
-
-### Load the service
-
-```bash
-launchctl load ~/Library/LaunchAgents/com.nanoclaw.qmd.plist
-```
-
-### Verify
-
-```bash
-curl -s -X POST http://127.0.0.1:8181/query -H "Content-Type: application/json" \
-  -d '{"searches": [{"type": "lex", "query": "test"}], "limit": 1}' \
-  || echo "qmd not responding — check /tmp/qmd.err"
-```
-
-## Phase 5: Build & Verify
+## Phase 3: Build & Verify
 
 ```bash
 npm run build
@@ -149,7 +78,7 @@ Restart NanoClaw:
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
 
-## Phase 6: Test
+## Phase 4: Test
 
 Send a test message to the Brain Router:
 
@@ -157,5 +86,5 @@ Send a test message to the Brain Router:
 
 Verify:
 1. File created in `~/knowledge/` with proper frontmatter
-2. qmd reindex triggered (check `/tmp/qmd.log`)
+2. qmd reindex triggered (`qmd status` shows updated counts)
 3. Search works: send "what do I know about test entry?"
