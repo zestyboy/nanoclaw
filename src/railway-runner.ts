@@ -115,13 +115,17 @@ function prepareWorkspaceDirs(
     env.NANOCLAW_WORKSPACE_SECOND_BRAIN = SECOND_BRAIN_DIR;
   }
 
-  // Credential proxy — agents route API calls through it
+  // On Railway, child processes share the same network, so pass real credentials
+  // directly instead of using the credential proxy (which can't intercept
+  // non-API calls like OAuth profile checks)
   const authMode = detectAuthMode();
-  env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${CREDENTIAL_PROXY_PORT}`;
   if (authMode === 'api-key') {
-    env.ANTHROPIC_API_KEY = 'placeholder';
+    env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
   } else {
-    env.CLAUDE_CODE_OAUTH_TOKEN = 'placeholder';
+    env.CLAUDE_CODE_OAUTH_TOKEN =
+      process.env.CLAUDE_CODE_OAUTH_TOKEN ||
+      process.env.ANTHROPIC_AUTH_TOKEN ||
+      '';
   }
 
   if (isMain) {

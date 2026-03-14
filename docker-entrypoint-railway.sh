@@ -4,6 +4,13 @@ set -e
 # Fix volume permissions
 chown -R node:node /data 2>/dev/null || true
 
+# Seed database on first run
+if [ ! -f "/data/store/messages.db" ] && [ -d "/app/seed-data" ]; then
+  mkdir -p /data/store
+  cp /app/seed-data/* /data/store/
+  chown -R node:node /data/store
+fi
+
 # Configure rclone for R2 (if credentials provided)
 if [ -n "$R2_ENDPOINT" ]; then
   mkdir -p /home/node/.config/rclone

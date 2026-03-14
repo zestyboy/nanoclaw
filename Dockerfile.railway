@@ -28,8 +28,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
     apt-get purge -y python3 make g++ && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 COPY --from=host-builder /build/dist ./dist
 COPY --from=agent-builder /build/dist /agent-runner-dist
+COPY --from=agent-builder /build/node_modules /agent-runner-dist/node_modules
 COPY container/skills /app/container/skills
 COPY groups /app/groups
+COPY seed-data /app/seed-data
 COPY docker-entrypoint-railway.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint-railway.sh
 RUN chown -R node:node /app

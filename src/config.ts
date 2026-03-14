@@ -36,9 +36,15 @@ export const SENDER_ALLOWLIST_PATH = path.join(
   'nanoclaw',
   'sender-allowlist.json',
 );
-export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
-export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
-export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
+export const STORE_DIR = IS_RAILWAY
+  ? path.resolve(RAILWAY_DATA_DIR, 'store')
+  : path.resolve(PROJECT_ROOT, 'store');
+export const GROUPS_DIR = IS_RAILWAY
+  ? path.resolve(RAILWAY_DATA_DIR, 'groups')
+  : path.resolve(PROJECT_ROOT, 'groups');
+export const DATA_DIR = IS_RAILWAY
+  ? path.resolve(RAILWAY_DATA_DIR, 'data')
+  : path.resolve(PROJECT_ROOT, 'data');
 export const PROJECTS_DIR =
   process.env.NANOCLAW_PROJECTS_DIR ||
   path.join(HOME_DIR, 'development', 'nanoclaw-projects');
