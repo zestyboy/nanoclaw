@@ -333,6 +333,72 @@ Use available_groups.json to find the JID for a group. The folder name must be c
   },
 );
 
+server.tool(
+  'execute_in_group',
+  `Execute a prompt in another group's context. Main group only. The target group's agent will process the prompt as if it received a message.`,
+  {
+    target_group_folder: z.string().describe('Folder name of the target group (e.g., "discord_my-project")'),
+    prompt: z.string().describe('The task prompt to execute in the target group'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can execute in other groups.' }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'execute_in_group',
+      target_group_folder: args.target_group_folder,
+      prompt: args.prompt,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Execution request sent to group "${args.target_group_folder}".` }],
+    };
+  },
+);
+
+server.tool(
+  'create_project',
+  `Create a new project with its own Discord channel and group registration. Main group only. Automatically creates the Discord channel, registers the group, sets up the folder with CLAUDE.md from a template, and updates projects.yaml.`,
+  {
+    name: z.string().describe('Project display name'),
+    slug: z.string().describe('URL-safe project identifier (lowercase, hyphens)'),
+    type: z.enum(['code', 'planning', 'research', 'general']).describe('Project type'),
+    brief: z.string().describe('One-line project description'),
+    aliases: z.string().describe('Comma-separated list of aliases/keywords'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can create projects.' }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'create_project',
+      name: args.name,
+      slug: args.slug,
+      projectType: args.type,
+      brief: args.brief,
+      aliases: args.aliases,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Project "${args.name}" creation requested. Watch for confirmation message.` }],
+    };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

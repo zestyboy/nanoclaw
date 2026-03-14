@@ -2,11 +2,13 @@ import fs from 'fs';
 import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
+import yaml from 'yaml';
 
-import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { DATA_DIR, GROUPS_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
-import { isValidGroupFolder } from './group-folder.js';
+import { createTask, deleteTask, getTaskById, storeMessage, updateTask } from './db.js';
+import { readEnvFile } from './env.js';
+import { fsNameToFolder, isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -22,6 +24,8 @@ export interface IpcDeps {
     availableGroups: AvailableGroup[],
     registeredJids: Set<string>,
   ) => void;
+  enqueueMessageCheck: (groupJid: string) => void;
+  createDiscordChannel?: (name: string) => Promise<string | null>;
 }
 
 let ipcWatcherRunning = false;
@@ -58,10 +62,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
       if (group.isMain) folderIsMain.set(group.folder, true);
     }
 
-    for (const sourceGroup of groupFolders) {
+    for (const sourceGroupFs of groupFolders) {
+      // Convert filesystem directory name back to canonical folder name
+      // (e.g., "project_finance-tracker" → "project:finance-tracker")
+      const sourceGroup = fsNameToFolder(sourceGroupFs);
       const isMain = folderIsMain.get(sourceGroup) === true;
-      const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
-      const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks');
+      const messagesDir = path.join(ipcBaseDir, sourceGroupFs, 'messages');
+      const tasksDir = path.join(ipcBaseDir, sourceGroupFs, 'tasks');
 
       // Process messages from this group's IPC directory
       try {
@@ -171,6 +178,14 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For execute_in_group
+    target_group_folder?: string;
+    // For create_project
+    slug?: string;
+    projectType?: string;
+    brief?: string;
+    aliases?: string;
+    host_path?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -449,7 +464,206 @@ export async function processTaskIpc(
       }
       break;
 
+    case 'execute_in_group':
+      if (!isMain) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized execute_in_group attempt blocked',
+        );
+        break;
+      }
+      if (data.target_group_folder && data.prompt) {
+        // Find the target group's JID by folder name
+        let targetJid: string | null = null;
+        for (const [jid, group] of Object.entries(registeredGroups)) {
+          if (group.folder === data.target_group_folder) {
+            targetJid = jid;
+            break;
+          }
+        }
+        if (!targetJid) {
+          logger.warn(
+            { targetFolder: data.target_group_folder },
+            'execute_in_group: target group not found',
+          );
+          break;
+        }
+
+        // Store a synthetic message so the agent sees it as input
+        const msgId = `router-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        storeMessage({
+          id: msgId,
+          chat_jid: targetJid,
+          sender: 'router',
+          sender_name: 'Router',
+          content: data.prompt,
+          timestamp: new Date().toISOString(),
+          is_from_me: true,
+        });
+
+        // Enqueue the group for processing
+        deps.enqueueMessageCheck(targetJid);
+        logger.info(
+          { sourceGroup, targetFolder: data.target_group_folder, targetJid },
+          'execute_in_group dispatched',
+        );
+      }
+      break;
+
+    case 'create_project':
+      if (!isMain) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized create_project attempt blocked',
+        );
+        break;
+      }
+      if (data.name && data.slug && data.projectType && data.brief) {
+        try {
+          await handleCreateProject(data as {
+            name: string;
+            slug: string;
+            projectType: string;
+            brief: string;
+            aliases?: string;
+          }, sourceGroup, registeredGroups, deps);
+        } catch (err) {
+          logger.error(
+            { err, slug: data.slug },
+            'create_project failed',
+          );
+          // Try to notify the main group of the failure
+          const mainJid = Object.entries(registeredGroups).find(
+            ([, g]) => g.isMain,
+          )?.[0];
+          if (mainJid) {
+            await deps.sendMessage(
+              mainJid,
+              `Failed to create project "${data.name}": ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+      } else {
+        logger.warn(
+          { data },
+          'create_project: missing required fields',
+        );
+      }
+      break;
+
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
   }
+}
+
+async function handleCreateProject(
+  data: {
+    name: string;
+    slug: string;
+    projectType: string;
+    brief: string;
+    aliases?: string;
+  },
+  sourceGroup: string,
+  registeredGroups: Record<string, RegisteredGroup>,
+  deps: IpcDeps,
+): Promise<void> {
+  const envVars = readEnvFile(['DISCORD_GUILD_ID', 'DISCORD_PROJECT_CATEGORY_ID', 'NANOCLAW_PROJECTS_DIR']);
+  const guildId = process.env.DISCORD_GUILD_ID || envVars.DISCORD_GUILD_ID;
+  const categoryId = process.env.DISCORD_PROJECT_CATEGORY_ID || envVars.DISCORD_PROJECT_CATEGORY_ID;
+
+  if (!guildId) {
+    throw new Error('DISCORD_GUILD_ID not configured');
+  }
+
+  if (!deps.createDiscordChannel) {
+    throw new Error('Discord channel not available');
+  }
+
+  // Create the Discord text channel
+  const channelId = await deps.createDiscordChannel(data.slug);
+  if (!channelId) {
+    throw new Error('Failed to create Discord channel');
+  }
+
+  const jid = `dc:${channelId}`;
+  const folder = `project:${data.slug}`;
+
+  // Register the group — project channels respond to all messages (no trigger needed)
+  // No additionalMounts needed: the project dir IS the group dir
+  deps.registerGroup(jid, {
+    name: data.name,
+    folder,
+    trigger: '@Router',
+    added_at: new Date().toISOString(),
+    requiresTrigger: false,
+  });
+
+  // Create project directory with all files in one place
+  const projectDir = resolveGroupFolderPath(folder);
+  fs.mkdirSync(path.join(projectDir, 'logs'), { recursive: true });
+
+  // Try to load template from groups/main/templates/
+  const templateName = data.projectType === 'code'
+    ? 'code-project-claude.md'
+    : 'general-project-claude.md';
+  const templatePath = path.join(GROUPS_DIR, 'main', 'templates', templateName);
+
+  let claudeContent: string;
+  if (fs.existsSync(templatePath)) {
+    claudeContent = fs.readFileSync(templatePath, 'utf-8')
+      .replace(/\{PROJECT_NAME\}/g, data.name)
+      .replace(/\{BRIEF\}/g, data.brief)
+      .replace(/\{SLUG\}/g, data.slug);
+  } else {
+    claudeContent = `# ${data.name}\n\n${data.brief}\n`;
+  }
+  fs.writeFileSync(path.join(projectDir, 'CLAUDE.md'), claudeContent);
+
+  // Create empty notes file
+  fs.writeFileSync(
+    path.join(projectDir, 'notes.md'),
+    `# ${data.name} - Notes\n`,
+  );
+
+  // Update projects.yaml
+  const projectsYamlPath = path.join(GROUPS_DIR, 'main', 'projects.yaml');
+  let projects: any[] = [];
+  if (fs.existsSync(projectsYamlPath)) {
+    const existing = yaml.parse(fs.readFileSync(projectsYamlPath, 'utf-8'));
+    if (Array.isArray(existing)) {
+      projects = existing;
+    } else if (existing?.projects && Array.isArray(existing.projects)) {
+      projects = existing.projects;
+    }
+  }
+
+  projects.push({
+    name: data.name,
+    slug: data.slug,
+    type: data.projectType,
+    brief: data.brief,
+    aliases: data.aliases ? data.aliases.split(',').map((a: string) => a.trim()) : [],
+    discord_channel_id: channelId,
+    folder,
+    created_at: new Date().toISOString(),
+  });
+
+  fs.writeFileSync(projectsYamlPath, yaml.stringify(projects));
+
+  // Send confirmation to the main group
+  const mainJid = Object.entries(registeredGroups).find(
+    ([, g]) => g.isMain,
+  )?.[0];
+  if (mainJid) {
+    await deps.sendMessage(
+      mainJid,
+      `Project ${data.name} created → <#${channelId}>`,
+    );
+  }
+
+  logger.info(
+    { name: data.name, slug: data.slug, channelId, folder },
+    'Project created successfully',
+  );
 }

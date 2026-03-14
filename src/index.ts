@@ -26,6 +26,7 @@ import {
 import {
   getAllChats,
   getAllRegisteredGroups,
+  deleteSession,
   getAllSessions,
   getAllTasks,
   getMessagesSince,
@@ -401,6 +402,24 @@ async function startMessageLoop(): Promise<void> {
             if (!hasTrigger) continue;
           }
 
+          // Handle /clear command — reset session without spawning a container
+          const clearMsg = groupMessages.find(
+            (m) => m.content.trim().toLowerCase() === '/clear',
+          );
+          if (clearMsg) {
+            delete sessions[group.folder];
+            deleteSession(group.folder);
+            lastAgentTimestamp[chatJid] = clearMsg.timestamp;
+            saveState();
+            channel
+              .sendMessage(chatJid, 'Session cleared.')
+              .catch((err) =>
+                logger.warn({ chatJid, err }, 'Failed to send /clear confirmation'),
+              );
+            logger.info({ group: group.name }, 'Session cleared via /clear command');
+            continue;
+          }
+
           // Pull all messages since lastAgentTimestamp so non-trigger
           // context that accumulated between triggers is included.
           const allPending = getMessagesSince(
@@ -547,6 +566,11 @@ async function main(): Promise<void> {
       if (text) await channel.sendMessage(jid, text);
     },
   });
+  // Find the Discord channel instance for create_project support
+  const discordChannel = channels.find((ch) => ch.name === 'discord') as
+    | (import('./channels/discord.js').DiscordChannel)
+    | undefined;
+
   startIpcWatcher({
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);
@@ -565,6 +589,24 @@ async function main(): Promise<void> {
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) =>
       writeGroupsSnapshot(gf, im, ag, rj),
+    enqueueMessageCheck: (groupJid: string) => queue.enqueueMessageCheck(groupJid),
+    createDiscordChannel: discordChannel
+      ? async (name: string) => {
+          const envVars = (await import('./env.js')).readEnvFile([
+            'DISCORD_GUILD_ID',
+            'DISCORD_PROJECT_CATEGORY_ID',
+          ]);
+          const guildId = process.env.DISCORD_GUILD_ID || envVars.DISCORD_GUILD_ID;
+          const categoryId = process.env.DISCORD_PROJECT_CATEGORY_ID || envVars.DISCORD_PROJECT_CATEGORY_ID;
+          if (!guildId) return null;
+          try {
+            return await discordChannel.createTextChannel(guildId, name, categoryId);
+          } catch (err) {
+            logger.error({ err, name }, 'Failed to create Discord channel');
+            return null;
+          }
+        }
+      : undefined,
   });
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
