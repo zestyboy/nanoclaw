@@ -531,6 +531,33 @@ async function main(): Promise<void> {
       channel?: string,
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
+    onSlashCommand: (
+      chatJid: string,
+      command: string,
+      respond: (text: string) => Promise<void>,
+    ) => {
+      const group = registeredGroups[chatJid];
+      if (!group) {
+        respond('This channel is not registered.').catch(() => {});
+        return;
+      }
+
+      if (command === 'clear') {
+        delete sessions[group.folder];
+        deleteSession(group.folder);
+        lastAgentTimestamp[chatJid] = new Date().toISOString();
+        saveState();
+        respond('Session cleared.').catch((err) =>
+          logger.warn(
+            { chatJid, err },
+            'Failed to respond to /clear slash command',
+          ),
+        );
+        logger.info({ group: group.name }, 'Session cleared via slash command');
+      } else {
+        respond(`Unknown command: /${command}`).catch(() => {});
+      }
+    },
     registeredGroups: () => registeredGroups,
   };
 

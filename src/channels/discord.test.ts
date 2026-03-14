@@ -30,11 +30,14 @@ type Handler = (...args: any[]) => any;
 
 const clientRef = vi.hoisted(() => ({ current: null as any }));
 
+const mockRestPut = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
 vi.mock('discord.js', () => {
   const Events = {
     MessageCreate: 'messageCreate',
     ClientReady: 'ready',
     Error: 'error',
+    InteractionCreate: 'interactionCreate',
   };
 
   const GatewayIntentBits = {
@@ -69,7 +72,7 @@ vi.mock('discord.js', () => {
       // Fire the ready event
       const readyHandlers = this.eventHandlers.get('ready') || [];
       for (const h of readyHandlers) {
-        h({ user: this.user });
+        await h({ user: this.user });
       }
     }
 
@@ -92,11 +95,45 @@ vi.mock('discord.js', () => {
   // Mock TextChannel type
   class TextChannel {}
 
+  // Mock REST
+  class REST {
+    constructor(_opts?: any) {}
+    setToken(_token: string) {
+      return this;
+    }
+    put = mockRestPut;
+  }
+
+  // Mock Routes
+  const Routes = {
+    applicationCommands: (appId: string) => `/applications/${appId}/commands`,
+  };
+
+  // Mock SlashCommandBuilder
+  class SlashCommandBuilder {
+    private _name = '';
+    private _description = '';
+    setName(name: string) {
+      this._name = name;
+      return this;
+    }
+    setDescription(desc: string) {
+      this._description = desc;
+      return this;
+    }
+    toJSON() {
+      return { name: this._name, description: this._description };
+    }
+  }
+
   return {
     Client: MockClient,
     Events,
     GatewayIntentBits,
     TextChannel,
+    REST,
+    Routes,
+    SlashCommandBuilder,
   };
 });
 
@@ -110,6 +147,7 @@ function createTestOpts(
   return {
     onMessage: vi.fn(),
     onChatMetadata: vi.fn(),
+    onSlashCommand: vi.fn(),
     registeredGroups: vi.fn(() => ({
       'dc:1234567890123456': {
         name: 'Test Server #general',
@@ -186,6 +224,30 @@ function currentClient() {
 async function triggerMessage(message: any) {
   const handlers = currentClient().eventHandlers.get('messageCreate') || [];
   for (const h of handlers) await h(message);
+}
+
+function createInteraction(overrides: {
+  channelId?: string;
+  commandName?: string;
+  userId?: string;
+  userTag?: string;
+  isChatInputCommand?: boolean;
+}) {
+  return {
+    channelId: overrides.channelId ?? '1234567890123456',
+    commandName: overrides.commandName ?? 'clear',
+    user: {
+      id: overrides.userId ?? '55512345',
+      tag: overrides.userTag ?? 'alice#1234',
+    },
+    isChatInputCommand: () => overrides.isChatInputCommand ?? true,
+    reply: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+async function triggerInteraction(interaction: any) {
+  const handlers = currentClient().eventHandlers.get('interactionCreate') || [];
+  for (const h of handlers) await h(interaction);
 }
 
 // --- Tests ---
@@ -763,6 +825,84 @@ describe('DiscordChannel', () => {
       await channel.setTyping('dc:1234567890123456', true);
 
       // No error
+    });
+  });
+
+  // --- Slash commands ---
+
+  describe('slash commands', () => {
+    it('registers slash commands on connect', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+
+      await channel.connect();
+
+      expect(mockRestPut).toHaveBeenCalledWith(
+        '/applications/999888777/commands',
+        {
+          body: [
+            { name: 'clear', description: 'Clear the current session context' },
+          ],
+        },
+      );
+    });
+
+    it('registers interactionCreate handler on connect', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+
+      await channel.connect();
+
+      expect(currentClient().eventHandlers.has('interactionCreate')).toBe(true);
+    });
+
+    it('calls onSlashCommand with correct args for /clear', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+
+      const interaction = createInteraction({ commandName: 'clear' });
+      await triggerInteraction(interaction);
+
+      expect(opts.onSlashCommand).toHaveBeenCalledWith(
+        'dc:1234567890123456',
+        'clear',
+        expect.any(Function),
+      );
+    });
+
+    it('ignores non-chat-input interactions', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+
+      const interaction = createInteraction({ isChatInputCommand: false });
+      await triggerInteraction(interaction);
+
+      expect(opts.onSlashCommand).not.toHaveBeenCalled();
+    });
+
+    it('respond callback calls interaction.reply with ephemeral', async () => {
+      const onSlashCommand = vi.fn(
+        async (
+          _jid: string,
+          _cmd: string,
+          respond: (text: string) => Promise<void>,
+        ) => {
+          await respond('Session cleared.');
+        },
+      );
+      const opts = createTestOpts({ onSlashCommand });
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+
+      const interaction = createInteraction({ commandName: 'clear' });
+      await triggerInteraction(interaction);
+
+      expect(interaction.reply).toHaveBeenCalledWith({
+        content: 'Session cleared.',
+        ephemeral: true,
+      });
     });
   });
 

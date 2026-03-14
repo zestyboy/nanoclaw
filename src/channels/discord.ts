@@ -4,13 +4,16 @@ import {
   Events,
   GatewayIntentBits,
   Message,
+  REST,
+  Routes,
+  SlashCommandBuilder,
   TextChannel,
 } from 'discord.js';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
-import { registerChannel, ChannelOpts } from './registry.js';
+import { registerChannel, ChannelOpts, OnSlashCommand } from './registry.js';
 import {
   Channel,
   OnChatMetadata,
@@ -21,6 +24,7 @@ import {
 export interface DiscordChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
+  onSlashCommand: OnSlashCommand;
   registeredGroups: () => Record<string, RegisteredGroup>;
 }
 
@@ -174,8 +178,32 @@ export class DiscordChannel implements Channel {
       logger.error({ err: err.message }, 'Discord client error');
     });
 
+    // Handle native slash commands (Discord Interactions API)
+    this.client.on(Events.InteractionCreate, async (interaction) => {
+      if (!interaction.isChatInputCommand()) return;
+
+      const chatJid = `dc:${interaction.channelId}`;
+      const command = interaction.commandName;
+
+      logger.info(
+        { chatJid, command, user: interaction.user.tag },
+        'Discord slash command received',
+      );
+
+      this.opts.onSlashCommand(chatJid, command, async (text: string) => {
+        try {
+          await interaction.reply({ content: text, ephemeral: true });
+        } catch (err) {
+          logger.warn(
+            { chatJid, command, err },
+            'Failed to reply to slash command',
+          );
+        }
+      });
+    });
+
     return new Promise<void>((resolve) => {
-      this.client!.once(Events.ClientReady, (readyClient) => {
+      this.client!.once(Events.ClientReady, async (readyClient) => {
         logger.info(
           { username: readyClient.user.tag, id: readyClient.user.id },
           'Discord bot connected',
@@ -184,6 +212,10 @@ export class DiscordChannel implements Channel {
         console.log(
           `  Use /chatid command or check channel IDs in Discord settings\n`,
         );
+
+        // Register slash commands with the Discord API
+        await this.registerSlashCommands(readyClient.user.id);
+
         resolve();
       });
 
@@ -265,6 +297,31 @@ export class DiscordChannel implements Channel {
       }
     } catch (err) {
       logger.debug({ jid, err }, 'Failed to send Discord typing indicator');
+    }
+  }
+
+  /**
+   * Register native slash commands with the Discord API.
+   * Uses global commands (available in all guilds the bot is in).
+   */
+  private async registerSlashCommands(applicationId: string): Promise<void> {
+    const commands = [
+      new SlashCommandBuilder()
+        .setName('clear')
+        .setDescription('Clear the current session context'),
+    ];
+
+    try {
+      const rest = new REST({ version: '10' }).setToken(this.botToken);
+      await rest.put(Routes.applicationCommands(applicationId), {
+        body: commands.map((c) => c.toJSON()),
+      });
+      logger.info(
+        { commandCount: commands.length },
+        'Discord slash commands registered',
+      );
+    } catch (err) {
+      logger.error({ err }, 'Failed to register Discord slash commands');
     }
   }
 }
