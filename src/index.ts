@@ -414,9 +414,15 @@ async function startMessageLoop(): Promise<void> {
             channel
               .sendMessage(chatJid, 'Session cleared.')
               .catch((err) =>
-                logger.warn({ chatJid, err }, 'Failed to send /clear confirmation'),
+                logger.warn(
+                  { chatJid, err },
+                  'Failed to send /clear confirmation',
+                ),
               );
-            logger.info({ group: group.name }, 'Session cleared via /clear command');
+            logger.info(
+              { group: group.name },
+              'Session cleared via /clear command',
+            );
             continue;
           }
 
@@ -568,7 +574,7 @@ async function main(): Promise<void> {
   });
   // Find the Discord channel instance for create_project support
   const discordChannel = channels.find((ch) => ch.name === 'discord') as
-    | (import('./channels/discord.js').DiscordChannel)
+    | import('./channels/discord.js').DiscordChannel
     | undefined;
 
   startIpcWatcher({
@@ -589,18 +595,26 @@ async function main(): Promise<void> {
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) =>
       writeGroupsSnapshot(gf, im, ag, rj),
-    enqueueMessageCheck: (groupJid: string) => queue.enqueueMessageCheck(groupJid),
+    enqueueMessageCheck: (groupJid: string) =>
+      queue.enqueueMessageCheck(groupJid),
     createDiscordChannel: discordChannel
       ? async (name: string) => {
           const envVars = (await import('./env.js')).readEnvFile([
             'DISCORD_GUILD_ID',
             'DISCORD_PROJECT_CATEGORY_ID',
           ]);
-          const guildId = process.env.DISCORD_GUILD_ID || envVars.DISCORD_GUILD_ID;
-          const categoryId = process.env.DISCORD_PROJECT_CATEGORY_ID || envVars.DISCORD_PROJECT_CATEGORY_ID;
+          const guildId =
+            process.env.DISCORD_GUILD_ID || envVars.DISCORD_GUILD_ID;
+          const categoryId =
+            process.env.DISCORD_PROJECT_CATEGORY_ID ||
+            envVars.DISCORD_PROJECT_CATEGORY_ID;
           if (!guildId) return null;
           try {
-            return await discordChannel.createTextChannel(guildId, name, categoryId);
+            return await discordChannel.createTextChannel(
+              guildId,
+              name,
+              categoryId,
+            );
           } catch (err) {
             logger.error({ err, name }, 'Failed to create Discord channel');
             return null;

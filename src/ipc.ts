@@ -6,9 +6,19 @@ import yaml from 'yaml';
 
 import { DATA_DIR, GROUPS_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, storeMessage, updateTask } from './db.js';
+import {
+  createTask,
+  deleteTask,
+  getTaskById,
+  storeMessage,
+  updateTask,
+} from './db.js';
 import { readEnvFile } from './env.js';
-import { fsNameToFolder, isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
+import {
+  fsNameToFolder,
+  isValidGroupFolder,
+  resolveGroupFolderPath,
+} from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -186,6 +196,11 @@ export async function processTaskIpc(
     brief?: string;
     aliases?: string;
     host_path?: string;
+    // For search_knowledge
+    searches?: Array<{ type: string; query: string }>;
+    intent?: string;
+    limit?: number;
+    resultId?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -510,6 +525,91 @@ export async function processTaskIpc(
       }
       break;
 
+    case 'search_knowledge': {
+      const {
+        searches,
+        intent,
+        limit = 10,
+        resultId: taskResultId,
+      } = data as {
+        searches: Array<{ type: string; query: string }>;
+        intent?: string;
+        limit?: number;
+        resultId?: string;
+      };
+      // Write result back to IPC input directory for the agent to read
+      const resultDir = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup.replace(/:/g, '_'),
+        'input',
+      );
+      fs.mkdirSync(resultDir, { recursive: true });
+      const resultFileName = taskResultId
+        ? `result-${taskResultId}.json`
+        : `result-${Date.now()}.json`;
+      try {
+        const envVars = readEnvFile(['QMD_HTTP_URL']);
+        const qmdUrl =
+          process.env.QMD_HTTP_URL ||
+          envVars.QMD_HTTP_URL ||
+          'http://127.0.0.1:8181';
+        const body: Record<string, unknown> = {
+          searches,
+          collections: ['knowledge'],
+          limit,
+        };
+        if (intent) body.intent = intent;
+        const response = await fetch(`${qmdUrl}/query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const results = await response.json();
+        fs.writeFileSync(
+          path.join(resultDir, resultFileName),
+          JSON.stringify({ success: true, results }),
+        );
+        logger.info(
+          { sourceGroup, resultFileName, resultCount: Array.isArray(results) ? results.length : 'unknown' },
+          'Knowledge search completed',
+        );
+      } catch (err) {
+        fs.writeFileSync(
+          path.join(resultDir, resultFileName),
+          JSON.stringify({
+            success: false,
+            error: 'Knowledge search unavailable — is qmd running?',
+          }),
+        );
+        logger.error(
+          { err, sourceGroup },
+          'Knowledge search failed',
+        );
+      }
+      break;
+    }
+
+    case 'reindex_knowledge': {
+      // Main-only: only the Brain Router should trigger reindexing
+      if (!isMain) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized reindex_knowledge attempt blocked',
+        );
+        break;
+      }
+      // Fire-and-forget: spawn background process, don't await
+      const { spawn: spawnChild } = await import('child_process');
+      const child = spawnChild('qmd', ['embed'], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+      logger.info({ sourceGroup }, 'Knowledge reindex started in background');
+      break;
+    }
+
     case 'create_project':
       if (!isMain) {
         logger.warn(
@@ -520,18 +620,20 @@ export async function processTaskIpc(
       }
       if (data.name && data.slug && data.projectType && data.brief) {
         try {
-          await handleCreateProject(data as {
-            name: string;
-            slug: string;
-            projectType: string;
-            brief: string;
-            aliases?: string;
-          }, sourceGroup, registeredGroups, deps);
-        } catch (err) {
-          logger.error(
-            { err, slug: data.slug },
-            'create_project failed',
+          await handleCreateProject(
+            data as {
+              name: string;
+              slug: string;
+              projectType: string;
+              brief: string;
+              aliases?: string;
+            },
+            sourceGroup,
+            registeredGroups,
+            deps,
           );
+        } catch (err) {
+          logger.error({ err, slug: data.slug }, 'create_project failed');
           // Try to notify the main group of the failure
           const mainJid = Object.entries(registeredGroups).find(
             ([, g]) => g.isMain,
@@ -544,10 +646,7 @@ export async function processTaskIpc(
           }
         }
       } else {
-        logger.warn(
-          { data },
-          'create_project: missing required fields',
-        );
+        logger.warn({ data }, 'create_project: missing required fields');
       }
       break;
 
@@ -568,9 +667,15 @@ async function handleCreateProject(
   registeredGroups: Record<string, RegisteredGroup>,
   deps: IpcDeps,
 ): Promise<void> {
-  const envVars = readEnvFile(['DISCORD_GUILD_ID', 'DISCORD_PROJECT_CATEGORY_ID', 'NANOCLAW_PROJECTS_DIR']);
+  const envVars = readEnvFile([
+    'DISCORD_GUILD_ID',
+    'DISCORD_PROJECT_CATEGORY_ID',
+    'NANOCLAW_PROJECTS_DIR',
+  ]);
   const guildId = process.env.DISCORD_GUILD_ID || envVars.DISCORD_GUILD_ID;
-  const categoryId = process.env.DISCORD_PROJECT_CATEGORY_ID || envVars.DISCORD_PROJECT_CATEGORY_ID;
+  const categoryId =
+    process.env.DISCORD_PROJECT_CATEGORY_ID ||
+    envVars.DISCORD_PROJECT_CATEGORY_ID;
 
   if (!guildId) {
     throw new Error('DISCORD_GUILD_ID not configured');
@@ -604,14 +709,16 @@ async function handleCreateProject(
   fs.mkdirSync(path.join(projectDir, 'logs'), { recursive: true });
 
   // Try to load template from groups/main/templates/
-  const templateName = data.projectType === 'code'
-    ? 'code-project-claude.md'
-    : 'general-project-claude.md';
+  const templateName =
+    data.projectType === 'code'
+      ? 'code-project-claude.md'
+      : 'general-project-claude.md';
   const templatePath = path.join(GROUPS_DIR, 'main', 'templates', templateName);
 
   let claudeContent: string;
   if (fs.existsSync(templatePath)) {
-    claudeContent = fs.readFileSync(templatePath, 'utf-8')
+    claudeContent = fs
+      .readFileSync(templatePath, 'utf-8')
       .replace(/\{PROJECT_NAME\}/g, data.name)
       .replace(/\{BRIEF\}/g, data.brief)
       .replace(/\{SLUG\}/g, data.slug);
@@ -643,7 +750,9 @@ async function handleCreateProject(
     slug: data.slug,
     type: data.projectType,
     brief: data.brief,
-    aliases: data.aliases ? data.aliases.split(',').map((a: string) => a.trim()) : [],
+    aliases: data.aliases
+      ? data.aliases.split(',').map((a: string) => a.trim())
+      : [],
     discord_channel_id: channelId,
     folder,
     created_at: new Date().toISOString(),

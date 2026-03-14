@@ -399,6 +399,100 @@ server.tool(
   },
 );
 
+server.tool(
+  'search_knowledge',
+  `Search the knowledge repository using qmd. Returns relevant documents and snippets. Only use when the user explicitly asks to search or pull from the knowledge base.
+
+Search types:
+• lex: Exact terms, keywords, names (e.g., "competitor pricing", "\"Acme Corp\"")
+• vec: Natural language questions (e.g., "what pricing strategies are competitors using")
+• hyde: Hypothetical answer text (e.g., "competitors charge $25-35 per seat")
+
+Combine multiple search types for best recall. The first search gets 2x weight.`,
+  {
+    searches: z.array(z.object({
+      type: z.enum(['lex', 'vec', 'hyde']).describe('Search type'),
+      query: z.string().describe('Search query'),
+    })).describe('Array of search objects'),
+    intent: z.string().optional().describe('Disambiguation hint when query terms are ambiguous'),
+    limit: z.number().optional().describe('Max results to return (default: 10)'),
+  },
+  async (args) => {
+    const taskId = `search-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const data = {
+      type: 'search_knowledge',
+      searches: args.searches,
+      intent: args.intent,
+      limit: args.limit || 10,
+      resultId: taskId,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    // Poll for result in IPC input directory
+    const resultPath = path.join(IPC_DIR, 'input', `result-${taskId}.json`);
+    const maxWait = 15000;
+    const pollInterval = 200;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      if (fs.existsSync(resultPath)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(resultPath, 'utf-8'));
+          fs.unlinkSync(resultPath);
+          if (result.success) {
+            return {
+              content: [{ type: 'text' as const, text: JSON.stringify(result.results, null, 2) }],
+            };
+          } else {
+            return {
+              content: [{ type: 'text' as const, text: result.error || 'Search failed' }],
+              isError: true,
+            };
+          }
+        } catch (err) {
+          return {
+            content: [{ type: 'text' as const, text: `Error reading search results: ${err}` }],
+            isError: true,
+          };
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: 'Knowledge search timed out — is qmd running on the host?' }],
+      isError: true,
+    };
+  },
+);
+
+server.tool(
+  'reindex_knowledge',
+  'Trigger re-indexing of the knowledge repository after adding or updating files. Runs in background (fire-and-forget). Main group only.',
+  {},
+  async () => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can trigger reindex.' }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'reindex_knowledge',
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: 'Reindex started in background.' }],
+    };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

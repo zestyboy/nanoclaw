@@ -13,11 +13,16 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
+  KNOWLEDGE_DIR,
   PROJECTS_DIR,
   TIMEZONE,
 } from './config.js';
 import { readEnvFile } from './env.js';
-import { resolveGroupFolderPath, resolveGroupIpcPath, resolveGroupSessionPath } from './group-folder.js';
+import {
+  resolveGroupFolderPath,
+  resolveGroupIpcPath,
+  resolveGroupSessionPath,
+} from './group-folder.js';
 import { logger } from './logger.js';
 import {
   CONTAINER_RUNTIME_BIN,
@@ -97,6 +102,15 @@ function buildVolumeMounts(
         readonly: false,
       });
     }
+
+    // Main gets writable access to knowledge vault for ingestion
+    if (fs.existsSync(KNOWLEDGE_DIR)) {
+      mounts.push({
+        hostPath: KNOWLEDGE_DIR,
+        containerPath: '/workspace/knowledge',
+        readonly: false,
+      });
+    }
   } else {
     // Other groups only get their own folder
     mounts.push({
@@ -112,6 +126,15 @@ function buildVolumeMounts(
       mounts.push({
         hostPath: globalDir,
         containerPath: '/workspace/global',
+        readonly: true,
+      });
+    }
+
+    // Non-main groups get read-only access to knowledge vault
+    if (fs.existsSync(KNOWLEDGE_DIR)) {
+      mounts.push({
+        hostPath: KNOWLEDGE_DIR,
+        containerPath: '/workspace/knowledge',
         readonly: true,
       });
     }
