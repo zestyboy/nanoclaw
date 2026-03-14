@@ -568,7 +568,15 @@ export async function processTaskIpc(
         const { execFileSync } = await import('child_process');
         const output = execFileSync(
           'qmd',
-          ['query', queryDoc, '--json', '-c', 'public-knowledge', '-n', String(limit)],
+          [
+            'query',
+            queryDoc,
+            '--json',
+            '-c',
+            'public-knowledge',
+            '-n',
+            String(limit),
+          ],
           { encoding: 'utf-8', timeout: 30000 },
         );
         const results = JSON.parse(output);
@@ -617,7 +625,10 @@ export async function processTaskIpc(
         stdio: 'ignore',
       });
       child.unref();
-      logger.info({ sourceGroup }, 'Public knowledge reindex started in background');
+      logger.info(
+        { sourceGroup },
+        'Public knowledge reindex started in background',
+      );
       break;
     }
 
