@@ -203,7 +203,7 @@ export async function processTaskIpc(
     brief?: string;
     aliases?: string;
     host_path?: string;
-    // For search_knowledge / search_second_brain
+    // For search_public_knowledge / search_second_brain
     searches?: Array<{ type: string; query: string }>;
     intent?: string;
     limit?: number;
@@ -533,7 +533,7 @@ export async function processTaskIpc(
       }
       break;
 
-    case 'search_knowledge': {
+    case 'search_public_knowledge': {
       const {
         searches,
         intent,
@@ -568,7 +568,7 @@ export async function processTaskIpc(
         const { execFileSync } = await import('child_process');
         const output = execFileSync(
           'qmd',
-          ['query', queryDoc, '--json', '-c', 'knowledge', '-n', String(limit)],
+          ['query', queryDoc, '--json', '-c', 'public-knowledge', '-n', String(limit)],
           { encoding: 'utf-8', timeout: 30000 },
         );
         const results = JSON.parse(output);
@@ -582,42 +582,42 @@ export async function processTaskIpc(
             resultFileName,
             resultCount: Array.isArray(results) ? results.length : 'unknown',
           },
-          'Knowledge search completed',
+          'Public knowledge search completed',
         );
       } catch (err) {
         fs.writeFileSync(
           path.join(resultDir, resultFileName),
           JSON.stringify({
             success: false,
-            error: 'Knowledge search failed — is qmd installed?',
+            error: 'Public knowledge search failed — is qmd installed?',
           }),
         );
-        logger.error({ err, sourceGroup }, 'Knowledge search failed');
+        logger.error({ err, sourceGroup }, 'Public knowledge search failed');
       }
       break;
     }
 
-    case 'reindex_knowledge': {
+    case 'reindex_public_knowledge': {
       // Main-only: only the Brain Router should trigger reindexing
       if (!isMain) {
         logger.warn(
           { sourceGroup },
-          'Unauthorized reindex_knowledge attempt blocked',
+          'Unauthorized reindex_public_knowledge attempt blocked',
         );
         break;
       }
       // Fire-and-forget: update index, regenerate embeddings, then sync to R2 if on Railway
       const { spawn: spawnChild } = await import('child_process');
       const reindexCmd =
-        IS_RAILWAY && process.env.R2_KNOWLEDGE_BUCKET
-          ? `qmd update -c knowledge && qmd embed && rclone sync /data/knowledge r2:${process.env.R2_KNOWLEDGE_BUCKET} --exclude ".remotely-save/**" --exclude ".qmd/**"`
-          : 'qmd update -c knowledge && qmd embed';
+        IS_RAILWAY && process.env.R2_PUBLIC_KNOWLEDGE_BUCKET
+          ? `qmd update -c public-knowledge && qmd embed && rclone sync /data/public-knowledge r2:${process.env.R2_PUBLIC_KNOWLEDGE_BUCKET} --exclude ".remotely-save/**" --exclude ".qmd/**"`
+          : 'qmd update -c public-knowledge && qmd embed';
       const child = spawnChild('sh', ['-c', reindexCmd], {
         detached: true,
         stdio: 'ignore',
       });
       child.unref();
-      logger.info({ sourceGroup }, 'Knowledge reindex started in background');
+      logger.info({ sourceGroup }, 'Public knowledge reindex started in background');
       break;
     }
 

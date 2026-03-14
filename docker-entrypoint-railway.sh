@@ -17,14 +17,14 @@ endpoint = ${R2_ENDPOINT}
 RCLONE
   chown -R node:node /home/node/.config
 
-  # Sync knowledge repo from R2
-  if [ -n "$R2_KNOWLEDGE_BUCKET" ]; then
-    mkdir -p /data/knowledge
-    gosu node rclone sync r2:${R2_KNOWLEDGE_BUCKET} /data/knowledge --exclude ".remotely-save/**"
-    if [ ! -f "/data/knowledge/.qmd/config.toml" ]; then
-      cd /data/knowledge && gosu node qmd init -c knowledge
+  # Sync public knowledge repo from R2
+  if [ -n "$R2_PUBLIC_KNOWLEDGE_BUCKET" ]; then
+    mkdir -p /data/public-knowledge
+    gosu node rclone sync r2:${R2_PUBLIC_KNOWLEDGE_BUCKET} /data/public-knowledge --exclude ".remotely-save/**"
+    if [ ! -f "/data/public-knowledge/.qmd/config.toml" ]; then
+      cd /data/public-knowledge && gosu node qmd init -c public-knowledge
     fi
-    cd /data/knowledge && gosu node sh -c 'qmd update -c knowledge && qmd embed' 2>/dev/null || true
+    cd /data/public-knowledge && gosu node sh -c 'qmd update -c public-knowledge && qmd embed' 2>/dev/null || true
   fi
 
   # Sync Second Brain from R2
@@ -40,9 +40,9 @@ RCLONE
   # Background sync loop (every 5 min: pull from R2, reindex both vaults)
   (while true; do
     sleep 300
-    if [ -n "$R2_KNOWLEDGE_BUCKET" ]; then
-      rclone sync r2:${R2_KNOWLEDGE_BUCKET} /data/knowledge --exclude ".remotely-save/**" 2>/dev/null
-      cd /data/knowledge && qmd update -c knowledge && qmd embed 2>/dev/null || true
+    if [ -n "$R2_PUBLIC_KNOWLEDGE_BUCKET" ]; then
+      rclone sync r2:${R2_PUBLIC_KNOWLEDGE_BUCKET} /data/public-knowledge --exclude ".remotely-save/**" 2>/dev/null
+      cd /data/public-knowledge && qmd update -c public-knowledge && qmd embed 2>/dev/null || true
     fi
     if [ -n "$R2_SECOND_BRAIN_BUCKET" ]; then
       rclone sync r2:${R2_SECOND_BRAIN_BUCKET} /data/second-brain --exclude ".remotely-save/**" 2>/dev/null

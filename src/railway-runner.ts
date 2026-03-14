@@ -12,7 +12,7 @@ import {
   CONTAINER_TIMEOUT,
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
-  KNOWLEDGE_DIR,
+  PUBLIC_KNOWLEDGE_DIR,
   RAILWAY_DATA_DIR,
   SECOND_BRAIN_DIR,
   TIMEZONE,
@@ -105,9 +105,9 @@ function prepareWorkspaceDirs(
     TZ: TIMEZONE,
   };
 
-  // Knowledge vault
-  if (KNOWLEDGE_DIR && fs.existsSync(KNOWLEDGE_DIR)) {
-    env.NANOCLAW_WORKSPACE_KNOWLEDGE = KNOWLEDGE_DIR;
+  // Public knowledge vault
+  if (PUBLIC_KNOWLEDGE_DIR && fs.existsSync(PUBLIC_KNOWLEDGE_DIR)) {
+    env.NANOCLAW_WORKSPACE_PUBLIC_KNOWLEDGE = PUBLIC_KNOWLEDGE_DIR;
   }
 
   // Second Brain vault

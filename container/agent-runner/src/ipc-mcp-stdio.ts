@@ -400,8 +400,8 @@ server.tool(
 );
 
 server.tool(
-  'search_knowledge',
-  `Search the knowledge repository using qmd. Returns relevant documents and snippets. Only use when the user explicitly asks to search or pull from the knowledge base.
+  'search_public_knowledge',
+  `Search the public knowledge repository using qmd. Returns relevant documents and snippets. Only use when the user explicitly asks to search or pull from the public knowledge base.
 
 Search types:
 • lex: Exact terms, keywords, names (e.g., "competitor pricing", "\"Acme Corp\"")
@@ -420,7 +420,7 @@ Combine multiple search types for best recall. The first search gets 2x weight.`
   async (args) => {
     const taskId = `search-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const data = {
-      type: 'search_knowledge',
+      type: 'search_public_knowledge',
       searches: args.searches,
       intent: args.intent,
       limit: args.limit || 10,
@@ -462,15 +462,15 @@ Combine multiple search types for best recall. The first search gets 2x weight.`
     }
 
     return {
-      content: [{ type: 'text' as const, text: 'Knowledge search timed out — is qmd running on the host?' }],
+      content: [{ type: 'text' as const, text: 'Public knowledge search timed out — is qmd running on the host?' }],
       isError: true,
     };
   },
 );
 
 server.tool(
-  'reindex_knowledge',
-  'Trigger re-indexing of the knowledge repository after adding or updating files. Runs in background (fire-and-forget). Main group only.',
+  'reindex_public_knowledge',
+  'Trigger re-indexing of the public knowledge repository after adding or updating files. Runs in background (fire-and-forget). Main group only.',
   {},
   async () => {
     if (!isMain) {
@@ -481,7 +481,7 @@ server.tool(
     }
 
     const data = {
-      type: 'reindex_knowledge',
+      type: 'reindex_public_knowledge',
       timestamp: new Date().toISOString(),
     };
 
@@ -489,6 +489,99 @@ server.tool(
 
     return {
       content: [{ type: 'text' as const, text: 'Reindex started in background.' }],
+    };
+  },
+);
+
+server.tool(
+  'search_second_brain',
+  `Search the Second Brain personal vault using qmd. Returns relevant documents and snippets. Only use when the user explicitly asks to search or pull from the Second Brain.
+
+Search types:
+• lex: Exact terms, keywords, names
+• vec: Natural language questions
+• hyde: Hypothetical answer text
+
+Combine multiple search types for best recall. The first search gets 2x weight.`,
+  {
+    searches: z.array(z.object({
+      type: z.enum(['lex', 'vec', 'hyde']).describe('Search type'),
+      query: z.string().describe('Search query'),
+    })).describe('Array of search objects'),
+    intent: z.string().optional().describe('Disambiguation hint when query terms are ambiguous'),
+    limit: z.number().optional().describe('Max results to return (default: 10)'),
+  },
+  async (args) => {
+    const taskId = `search-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const data = {
+      type: 'search_second_brain',
+      searches: args.searches,
+      intent: args.intent,
+      limit: args.limit || 10,
+      resultId: taskId,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    const resultPath = path.join(IPC_DIR, 'input', `result-${taskId}.json`);
+    const maxWait = 15000;
+    const pollInterval = 200;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      if (fs.existsSync(resultPath)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(resultPath, 'utf-8'));
+          fs.unlinkSync(resultPath);
+          if (result.success) {
+            return {
+              content: [{ type: 'text' as const, text: JSON.stringify(result.results, null, 2) }],
+            };
+          } else {
+            return {
+              content: [{ type: 'text' as const, text: result.error || 'Search failed' }],
+              isError: true,
+            };
+          }
+        } catch (err) {
+          return {
+            content: [{ type: 'text' as const, text: `Error reading search results: ${err}` }],
+            isError: true,
+          };
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: 'Second Brain search timed out — is qmd running on the host?' }],
+      isError: true,
+    };
+  },
+);
+
+server.tool(
+  'reindex_second_brain',
+  'Trigger re-indexing of the Second Brain vault after adding or updating files. Runs in background (fire-and-forget). Main group only.',
+  {},
+  async () => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can trigger reindex.' }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'reindex_second_brain',
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: 'Second Brain reindex started in background.' }],
     };
   },
 );

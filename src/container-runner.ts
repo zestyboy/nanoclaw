@@ -15,7 +15,7 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   IS_RAILWAY,
-  KNOWLEDGE_DIR,
+  PUBLIC_KNOWLEDGE_DIR,
   PROJECTS_DIR,
   SECOND_BRAIN_DIR,
   TIMEZONE,
@@ -112,11 +112,11 @@ function buildVolumeMounts(
       });
     }
 
-    // Main gets writable access to knowledge vault for ingestion
-    if (fs.existsSync(KNOWLEDGE_DIR)) {
+    // Main gets writable access to public knowledge vault for ingestion
+    if (fs.existsSync(PUBLIC_KNOWLEDGE_DIR)) {
       mounts.push({
-        hostPath: KNOWLEDGE_DIR,
-        containerPath: '/workspace/knowledge',
+        hostPath: PUBLIC_KNOWLEDGE_DIR,
+        containerPath: '/workspace/public-knowledge',
         readonly: false,
       });
     }
@@ -148,11 +148,11 @@ function buildVolumeMounts(
       });
     }
 
-    // Non-main groups get read-only access to knowledge vault
-    if (fs.existsSync(KNOWLEDGE_DIR)) {
+    // Non-main groups get read-only access to public knowledge vault
+    if (fs.existsSync(PUBLIC_KNOWLEDGE_DIR)) {
       mounts.push({
-        hostPath: KNOWLEDGE_DIR,
-        containerPath: '/workspace/knowledge',
+        hostPath: PUBLIC_KNOWLEDGE_DIR,
+        containerPath: '/workspace/public-knowledge',
         readonly: true,
       });
     }

@@ -1,16 +1,16 @@
 ---
-name: knowledge
-description: Knowledge repository conventions for the Obsidian vault at /workspace/knowledge. Teaches vault structure, frontmatter schema, entity resolution, and search patterns.
+name: public-knowledge
+description: Public knowledge repository conventions for the work-related Obsidian vault at /workspace/public-knowledge. Teaches vault structure, frontmatter schema, entity resolution, and search patterns.
 ---
 
-# Knowledge Repository
+# Public Knowledge Repository
 
-The knowledge vault is an Obsidian vault mounted at `/workspace/knowledge`. Follow these conventions when reading, writing, or searching knowledge.
+The public knowledge vault is a work-related Obsidian vault mounted at `/workspace/public-knowledge`. This vault is shareable and geared towards work content. Follow these conventions when reading, writing, or searching.
 
 ## Vault Structure
 
 ```
-/workspace/knowledge/
+/workspace/public-knowledge/
   Attachments/       # Images, PDFs, media
   Categories/        # Topic overview notes that link to everything in a category
   Clippings/         # Content written by others (articles, research)
@@ -69,12 +69,12 @@ Never create a note without checking for existing ones first.
 1. **Extract the entity/topic name** from the message
 2. **List files in the target directory** — scan filenames for matches:
    ```bash
-   ls /workspace/knowledge/References/   # for entities
-   ls /workspace/knowledge/Clippings/    # for external content
-   ls /workspace/knowledge/              # for synthesis (root)
+   ls /workspace/public-knowledge/References/   # for entities
+   ls /workspace/public-knowledge/Clippings/    # for external content
+   ls /workspace/public-knowledge/              # for synthesis (root)
    ```
 3. **Search qmd** for the entity name (catches mentions even if filename differs):
-   Call `mcp__nanoclaw__search_knowledge` with a lex search for the entity name
+   Call `mcp__nanoclaw__search_public_knowledge` with a lex search for the entity name
 4. **Match with tolerance** — these all refer to the same entity:
    - `Acme Corp.md` ↔ "Acme" ↔ "ACME Corporation" ↔ "Acme Corp Inc"
    - Case-insensitive, ignore suffixes (Corp, Inc, Ltd), treat partial names as potential matches
@@ -83,9 +83,9 @@ Never create a note without checking for existing ones first.
    - **Ambiguous** (multiple candidates) → ask the user which note to update
    - **No match** → create a new note, add name variants as aliases in frontmatter
 
-## Searching Knowledge
+## Searching Public Knowledge
 
-Use `mcp__nanoclaw__search_knowledge` with appropriate search types:
+Use `mcp__nanoclaw__search_public_knowledge` with appropriate search types:
 
 - **lex**: Exact terms, names, identifiers (e.g., `"competitor pricing"`, `"\"Acme Corp\""`)
 - **vec**: Natural language questions (e.g., `"what pricing strategies are competitors using"`)
@@ -95,8 +95,8 @@ Combine `lex` + `vec` for best recall. The first search gets 2x weight. Add `int
 
 ## Template Evolution
 
-1. **Track structure during ingestion.** Check `/workspace/knowledge/Templates/` and scan recent notes of the same type for recurring patterns
+1. **Track structure during ingestion.** Check `/workspace/public-knowledge/Templates/` and scan recent notes of the same type for recurring patterns
 2. **Detect patterns.** After 3+ notes of the same type share a recurring structure (similar sections, same frontmatter fields, same folder), propose a template to the user
 3. **Propose, don't act.** Describe the proposed template and wait for confirmation. Never create templates silently
-4. **Create on approval.** Write to `/workspace/knowledge/Templates/{name}.md` using Obsidian template format with `{{date}}` and `{{title}}` placeholders
+4. **Create on approval.** Write to `/workspace/public-knowledge/Templates/{name}.md` using Obsidian template format with `{{date}}` and `{{title}}` placeholders
 5. **Refine over time.** When usage patterns drift from an existing template, suggest updating it
