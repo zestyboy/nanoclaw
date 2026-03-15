@@ -85,8 +85,22 @@ if [ "$SUBDIRS" -eq 1 ]; then
 fi
 
 # Notion nests databases under "[v3] .../Databases & Components/"
-# Find the deepest "Databases & Components" folder and use it as the export root
-DB_COMPONENTS=$(find "$EXPORT_ROOT" -type d -name "Databases & Components" 2>/dev/null | head -1)
+# Find the v3 Databases & Components folder (not archived versions)
+# Prefer paths containing "[v3]", fall back to any match
+DB_COMPONENTS=""
+while IFS= read -r -d '' dir; do
+  case "$dir" in
+    *"[v3]"*|*"v3"*)
+      DB_COMPONENTS="$dir"
+      break
+      ;;
+    *)
+      # Keep as fallback if no v3 found
+      [ -z "$DB_COMPONENTS" ] && DB_COMPONENTS="$dir"
+      ;;
+  esac
+done < <(find "$EXPORT_ROOT" -type d -name "Databases & Components" -print0 2>/dev/null)
+
 if [ -n "$DB_COMPONENTS" ]; then
   echo "  Found Databases & Components at: ${DB_COMPONENTS}"
   EXPORT_ROOT="$DB_COMPONENTS"
