@@ -27,12 +27,26 @@ export function startCredentialProxy(
   port: number,
   host = '127.0.0.1',
 ): Promise<Server> {
-  const secrets = readEnvFile([
+  const fileSecrets = readEnvFile([
     'ANTHROPIC_API_KEY',
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_AUTH_TOKEN',
     'ANTHROPIC_BASE_URL',
   ]);
+
+  // Merge: .env file takes precedence, then process.env as fallback.
+  // On Railway (no .env file), tokens come from Railway environment variables.
+  // This is safe: railway-runner overrides child env with placeholder tokens,
+  // so real secrets never leak to agent processes.
+  const secrets: Record<string, string> = {};
+  for (const key of [
+    'ANTHROPIC_API_KEY',
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'ANTHROPIC_AUTH_TOKEN',
+    'ANTHROPIC_BASE_URL',
+  ]) {
+    secrets[key] = fileSecrets[key] || process.env[key] || '';
+  }
 
   const authMode: AuthMode = secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
   const oauthToken =
@@ -120,6 +134,7 @@ export function startCredentialProxy(
 
 /** Detect which auth mode the host is configured for. */
 export function detectAuthMode(): AuthMode {
-  const secrets = readEnvFile(['ANTHROPIC_API_KEY']);
-  return secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
+  const fileSecrets = readEnvFile(['ANTHROPIC_API_KEY']);
+  const apiKey = fileSecrets.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+  return apiKey ? 'api-key' : 'oauth';
 }

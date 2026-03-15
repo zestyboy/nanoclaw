@@ -11,6 +11,19 @@ if [ ! -f "/data/store/messages.db" ] && [ -d "/app/seed-data" ]; then
   chown -R node:node /data/store
 fi
 
+# Sync group system prompts from image to persistent volume on every deploy.
+# CLAUDE.md and templates/ are code artifacts — always overwrite with latest.
+# Other files (logs, conversations, notes) are agent data — never touched.
+if [ -d "/app/groups" ]; then
+  for group_dir in /app/groups/*/; do
+    group_name=$(basename "$group_dir")
+    mkdir -p "/data/groups/$group_name"
+    [ -f "$group_dir/CLAUDE.md" ] && cp "$group_dir/CLAUDE.md" "/data/groups/$group_name/CLAUDE.md"
+    [ -d "$group_dir/templates" ] && cp -r "$group_dir/templates" "/data/groups/$group_name/"
+  done
+  chown -R node:node /data/groups
+fi
+
 # Configure rclone for R2 (if credentials provided)
 if [ -n "$R2_ENDPOINT" ]; then
   mkdir -p /home/node/.config/rclone

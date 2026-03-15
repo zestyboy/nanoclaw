@@ -42,8 +42,10 @@ export const STORE_DIR = IS_RAILWAY
 export const GROUPS_DIR = IS_RAILWAY
   ? path.resolve(RAILWAY_DATA_DIR, 'groups')
   : path.resolve(PROJECT_ROOT, 'groups');
+// On Railway, ipc/ and sessions/ live directly under /data (the persistent volume).
+// Locally, they live under ./data/ in the project root.
 export const DATA_DIR = IS_RAILWAY
-  ? path.resolve(RAILWAY_DATA_DIR, 'data')
+  ? RAILWAY_DATA_DIR
   : path.resolve(PROJECT_ROOT, 'data');
 export const PROJECTS_DIR =
   process.env.NANOCLAW_PROJECTS_DIR ||

@@ -115,17 +115,15 @@ function prepareWorkspaceDirs(
     env.NANOCLAW_WORKSPACE_SECOND_BRAIN = SECOND_BRAIN_DIR;
   }
 
-  // On Railway, child processes share the same network, so pass real credentials
-  // directly instead of using the credential proxy (which can't intercept
-  // non-API calls like OAuth profile checks)
+  // Credential proxy — agents route ALL API calls through it.
+  // OAuth mode: proxy replaces placeholder Bearer with real token.
+  // Must use placeholder so Claude Code doesn't try direct OAuth calls.
   const authMode = detectAuthMode();
+  env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${CREDENTIAL_PROXY_PORT}`;
   if (authMode === 'api-key') {
-    env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+    env.ANTHROPIC_API_KEY = 'placeholder';
   } else {
-    env.CLAUDE_CODE_OAUTH_TOKEN =
-      process.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      process.env.ANTHROPIC_AUTH_TOKEN ||
-      '';
+    env.CLAUDE_CODE_OAUTH_TOKEN = 'placeholder';
   }
 
   if (isMain) {

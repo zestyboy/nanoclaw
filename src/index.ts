@@ -329,6 +329,16 @@ async function runAgent(
     }
 
     if (output.status === 'error') {
+      // Clear stale session if the conversation was not found —
+      // prevents infinite retry loops with a dead session ID.
+      if (output.error?.includes('No conversation found')) {
+        delete sessions[group.folder];
+        deleteSession(group.folder);
+        logger.warn(
+          { group: group.name },
+          'Cleared stale session (conversation not found)',
+        );
+      }
       logger.error(
         { group: group.name, error: output.error },
         'Container agent error',

@@ -550,10 +550,13 @@ async function main(): Promise<void> {
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     log(`Agent error: ${errorMessage}`);
+    // Don't propagate stale session ID when conversation was not found —
+    // this prevents the host from re-persisting a dead session.
+    const isStaleSession = errorMessage.includes('No conversation found');
     writeOutput({
       status: 'error',
       result: null,
-      newSessionId: sessionId,
+      newSessionId: isStaleSession ? undefined : sessionId,
       error: errorMessage
     });
     process.exit(1);
