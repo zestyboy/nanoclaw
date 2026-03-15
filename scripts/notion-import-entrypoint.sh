@@ -62,8 +62,19 @@ echo "  Downloaded."
 
 EXTRACT_DIR="${WORK_DIR}/notion-export"
 mkdir -p "$EXTRACT_DIR"
-echo "Extracting..."
+echo "Extracting outer zip..."
 unzip -q "${WORK_DIR}/${ZIP_NAME}" -d "$EXTRACT_DIR"
+
+# Notion wraps large exports in nested zips (Part-1.zip, Part-2.zip, etc.)
+# Extract any inner zip files
+INNER_ZIPS=$(find "$EXTRACT_DIR" -maxdepth 1 -name "*.zip" 2>/dev/null)
+if [ -n "$INNER_ZIPS" ]; then
+  echo "  Found nested zip(s) — extracting..."
+  for inner in $INNER_ZIPS; do
+    unzip -q -o "$inner" -d "$EXTRACT_DIR"
+    rm "$inner"
+  done
+fi
 
 # Find the actual export root (might be nested one level)
 EXPORT_ROOT="$EXTRACT_DIR"
@@ -72,6 +83,18 @@ if [ "$SUBDIRS" -eq 1 ]; then
   EXPORT_ROOT="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d)"
   echo "  Export root: ${EXPORT_ROOT}"
 fi
+
+# Notion nests databases under "[v3] .../Databases & Components/"
+# Find the deepest "Databases & Components" folder and use it as the export root
+DB_COMPONENTS=$(find "$EXPORT_ROOT" -type d -name "Databases & Components" 2>/dev/null | head -1)
+if [ -n "$DB_COMPONENTS" ]; then
+  echo "  Found Databases & Components at: ${DB_COMPONENTS}"
+  EXPORT_ROOT="$DB_COMPONENTS"
+fi
+
+echo "  Final export root: ${EXPORT_ROOT}"
+echo "  Contents:"
+ls "$EXPORT_ROOT" | head -20
 echo ""
 
 # --- Download vault infrastructure from R2 ---
