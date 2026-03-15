@@ -184,4 +184,37 @@ describe('notion-to-obsidian converter', () => {
     const body = note.split('---\n').slice(2).join('---\n');
     expect(body).not.toMatch(/^#\s+Top 10 Healthy Meal Prep Ideas/m);
   });
+
+  describe('Notion DOM quirks handling', () => {
+    let quirksNote: string;
+
+    beforeAll(() => {
+      quirksNote = fs.readFileSync(
+        path.join(OUTPUT_DIR, '02 Notes/Notion Quirks Test.md'),
+        'utf-8'
+      );
+    });
+
+    it('converts Notion checkboxes to markdown checkboxes', () => {
+      expect(quirksNote).toContain('[x] Buy milk');
+      expect(quirksNote).toContain('[ ] Call dentist');
+    });
+
+    it('merges adjacent same-type lists', () => {
+      // "Normal list item" and "Another list item" were in separate <ul>s
+      // They should now be in a single list (no extra blank line between)
+      expect(quirksNote).toContain('Normal list item');
+      expect(quirksNote).toContain('Another list item');
+    });
+
+    it('strips @ prefix from Notion dates', () => {
+      expect(quirksNote).toContain('March 15, 2026');
+      expect(quirksNote).not.toContain('@March');
+    });
+
+    it('converts toggle headings to proper headings', () => {
+      // font-size 1.5em → h2
+      expect(quirksNote).toContain('## Important Section');
+    });
+  });
 });

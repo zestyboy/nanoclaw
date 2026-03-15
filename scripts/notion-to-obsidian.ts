@@ -250,6 +250,64 @@ interface NotionPage {
 const fileNameMap = new Map<string, string>();
 
 // ---------------------------------------------------------------------------
+// Notion DOM fixes (patterns from the Obsidian Importer plugin)
+// ---------------------------------------------------------------------------
+
+/** Notion wraps each <li> in its own <ul>/<ol>. Merge adjacent same-type lists. */
+function fixNotionLists(root: Element): void {
+  const lists = root.querySelectorAll('ul, ol');
+  for (const list of lists) {
+    const next = list.nextElementSibling;
+    if (next && next.tagName === list.tagName) {
+      // Move all children from next list into current
+      while (next.firstChild) {
+        list.appendChild(next.firstChild);
+      }
+      next.parentElement?.removeChild(next);
+    }
+  }
+}
+
+/** Convert Notion checkbox divs to markdown-style checkboxes. */
+function fixNotionCheckboxes(root: Element): void {
+  const checkboxes = root.querySelectorAll('.checkbox');
+  for (const cb of checkboxes) {
+    const isChecked = cb.classList.contains('checkbox-on');
+    const marker = isChecked ? '[x] ' : '[ ] ';
+    const textNode = cb.ownerDocument.createTextNode(marker);
+    cb.parentElement?.replaceChild(textNode, cb);
+  }
+}
+
+/** Notion prepends @ to dates in the body. Strip it. */
+function fixNotionDates(root: Element): void {
+  const times = root.querySelectorAll('time');
+  for (const time of times) {
+    const text = time.textContent || '';
+    if (text.startsWith('@')) {
+      time.textContent = text.slice(1).trim();
+    }
+  }
+}
+
+/** Convert Notion toggle headings (<summary> with font-size) to proper headings. */
+function fixToggleHeadings(root: Element): void {
+  const summaries = root.querySelectorAll('summary');
+  for (const summary of summaries) {
+    const style = summary.getAttribute('style') || '';
+    let tag = '';
+    if (style.includes('1.875em')) tag = 'h1';
+    else if (style.includes('1.5em')) tag = 'h2';
+    else if (style.includes('1.25em')) tag = 'h3';
+    if (tag) {
+      const heading = summary.ownerDocument.createElement(tag);
+      heading.innerHTML = summary.innerHTML;
+      summary.parentElement?.replaceChild(heading, summary);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Parse a Notion HTML file
 // ---------------------------------------------------------------------------
 
@@ -263,9 +321,10 @@ function parseNotionHtml(
   const dom = new JSDOM(html);
   const doc = dom.window.document;
 
-  // Extract title from filename
+  // Extract title: prefer <title> element (full title), fall back to filename
   const basename = path.basename(htmlPath, '.html');
-  const title = stripNotionUuid(basename);
+  const titleEl = doc.querySelector('title');
+  const title = titleEl?.textContent?.trim() || stripNotionUuid(basename);
 
   // Extract properties from the Notion property table
   const properties: Record<string, unknown> = {};
@@ -316,6 +375,21 @@ function parseNotionHtml(
   const bodyElement = doc.querySelector('.page-body') || doc.body;
   const turndown = createTurndown();
 
+  // --- Notion-specific DOM fixes (from Obsidian Importer patterns) ---
+
+  // Fix Notion's list structure: each <li> is wrapped in its own <ul>/<ol>
+  // Merge adjacent same-type lists into a single list
+  fixNotionLists(bodyElement);
+
+  // Convert Notion checkboxes in body to markdown checkboxes
+  fixNotionCheckboxes(bodyElement);
+
+  // Strip @ prefix from Notion date elements
+  fixNotionDates(bodyElement);
+
+  // Convert toggle headings: <summary> with font-size → proper headings
+  fixToggleHeadings(bodyElement);
+
   // Before converting, fix internal links to use clean names
   const links = bodyElement.querySelectorAll('a');
   for (const link of links) {
@@ -356,6 +430,9 @@ function parseNotionHtml(
     /WKLNK8START8(.+?)8END8WKLNK/g,
     (_match, name) => `[[${name}]]`
   );
+
+  // Fix Turndown-escaped checkboxes: \[x\] → [x], \[ \] → [ ]
+  body = body.replace(/\\\[(x| )\\\]/g, '[$1]');
 
   // Clean up excessive blank lines
   body = body.replace(/\n{3,}/g, '\n\n').trim();
