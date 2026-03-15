@@ -45,23 +45,45 @@ RCLONE
     gosu node sh -c 'qmd update -c public-knowledge && qmd embed -c public-knowledge' 2>/dev/null || true
   fi
 
-  # Sync Second Brain from R2
+  # Second Brain: Railway volume is the working copy, R2 is the backup.
+  # On startup: restore from R2 only if the local volume is empty (fresh deploy).
+  # The periodic sync (below) pushes Railway → R2 as backup.
   if [ -n "$R2_SECOND_BRAIN_BUCKET" ]; then
     mkdir -p /data/second-brain
-    gosu node rclone sync r2:${R2_SECOND_BRAIN_BUCKET} /data/second-brain --exclude ".remotely-save/**" || true
+    LOCAL_COUNT=$(find /data/second-brain -name "*.md" 2>/dev/null | head -1)
+    if [ -z "$LOCAL_COUNT" ]; then
+      echo "Second Brain: volume empty — restoring from R2 backup..."
+      gosu node rclone sync r2:${R2_SECOND_BRAIN_BUCKET} /data/second-brain --exclude ".remotely-save/**" --exclude "*.zip" || true
+    else
+      echo "Second Brain: volume has data — skipping R2 restore."
+    fi
     gosu node qmd collection add second-brain /data/second-brain 2>/dev/null || true
     gosu node sh -c 'qmd update -c second-brain && qmd embed -c second-brain' 2>/dev/null || true
   fi
 
-  # Background sync loop (every 5 min: pull from R2, reindex both vaults)
+  # Background sync loops:
+  #
+  # Public knowledge: R2 → Railway every 5 min (R2 is source of truth, changes come from git/external edits)
+  # Second Brain: Railway → R2 every 12 hours (Railway is working copy, R2 is just a backup)
+  # qmd reindex: on-demand via reindex_second_brain IPC, plus a daily safety-net reindex
+  #
+  # Note: agents trigger qmd reindex after writing notes via the reindex_second_brain MCP tool.
+  # The periodic reindex here is just a fallback in case the on-demand trigger is missed.
+
+  # Public knowledge sync (every 5 min — R2 is source of truth)
   (while true; do
     sleep 300
     if [ -n "$R2_PUBLIC_KNOWLEDGE_BUCKET" ]; then
       rclone sync r2:${R2_PUBLIC_KNOWLEDGE_BUCKET} /data/public-knowledge --exclude ".remotely-save/**" 2>/dev/null
       qmd update -c public-knowledge && qmd embed -c public-knowledge 2>/dev/null || true
     fi
+  done) &
+
+  # Second Brain backup + reindex (every 12 hours)
+  (while true; do
+    sleep 43200
     if [ -n "$R2_SECOND_BRAIN_BUCKET" ]; then
-      rclone sync r2:${R2_SECOND_BRAIN_BUCKET} /data/second-brain --exclude ".remotely-save/**" 2>/dev/null
+      rclone sync /data/second-brain r2:${R2_SECOND_BRAIN_BUCKET} --exclude ".remotely-save/**" --exclude ".obsidian/**" --exclude "*.zip" 2>/dev/null
       qmd update -c second-brain && qmd embed -c second-brain 2>/dev/null || true
     fi
   done) &
