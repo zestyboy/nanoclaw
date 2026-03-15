@@ -1,0 +1,26 @@
+FROM node:22-slim
+
+# Install rclone, unzip, bsdtar (handles Unicode filenames), and locale support
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    rclone unzip libarchive-tools ca-certificates locales \
+    && rm -rf /var/lib/apt/lists/* \
+    && sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && locale-gen
+
+ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+
+WORKDIR /app
+
+# Copy package files and install dependencies
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev
+
+# Copy the converter script
+COPY scripts/notion-to-obsidian.ts scripts/
+COPY scripts/notion-import-r2.sh scripts/
+RUN chmod +x scripts/notion-import-r2.sh
+
+# The entrypoint configures rclone from env vars, then runs the import
+COPY scripts/notion-import-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

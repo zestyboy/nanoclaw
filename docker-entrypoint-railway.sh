@@ -37,33 +37,43 @@ endpoint = ${R2_ENDPOINT}
 RCLONE
   chown -R node:node /home/node/.config
 
-  # Sync public knowledge repo from R2
-  if [ -n "$R2_PUBLIC_KNOWLEDGE_BUCKET" ]; then
-    mkdir -p /data/public-knowledge
-    gosu node rclone sync r2:${R2_PUBLIC_KNOWLEDGE_BUCKET} /data/public-knowledge --exclude ".remotely-save/**" || true
-    gosu node qmd collection add public-knowledge /data/public-knowledge 2>/dev/null || true
-    gosu node sh -c 'qmd update -c public-knowledge && qmd embed -c public-knowledge' 2>/dev/null || true
-  fi
+  # Knowledge vaults: Railway volume is the working copy, R2 is the backup.
+  # On startup: restore from R2 only if the local volume is empty (fresh deploy).
+  # Every 12h: backup Railway → R2.
+  # Agents trigger qmd reindex on-demand after writes; 12h periodic reindex as fallback.
 
-  # Sync Second Brain from R2
-  if [ -n "$R2_SECOND_BRAIN_BUCKET" ]; then
-    mkdir -p /data/second-brain
-    gosu node rclone sync r2:${R2_SECOND_BRAIN_BUCKET} /data/second-brain --exclude ".remotely-save/**" || true
-    gosu node qmd collection add second-brain /data/second-brain 2>/dev/null || true
-    gosu node sh -c 'qmd update -c second-brain && qmd embed -c second-brain' 2>/dev/null || true
-  fi
+  for vault_name in public-knowledge second-brain; do
+    case "$vault_name" in
+      public-knowledge) BUCKET="$R2_PUBLIC_KNOWLEDGE_BUCKET" ;;
+      second-brain)     BUCKET="$R2_SECOND_BRAIN_BUCKET" ;;
+    esac
 
-  # Background sync loop (every 5 min: pull from R2, reindex both vaults)
+    if [ -z "$BUCKET" ]; then continue; fi
+
+    mkdir -p "/data/$vault_name"
+    LOCAL_FILES=$(find "/data/$vault_name" -name "*.md" 2>/dev/null | head -1)
+    if [ -z "$LOCAL_FILES" ]; then
+      echo "$vault_name: volume empty — restoring from R2 backup..."
+      gosu node rclone sync "r2:${BUCKET}" "/data/$vault_name" --exclude ".remotely-save/**" --exclude "*.zip" || true
+    else
+      echo "$vault_name: volume has data — skipping R2 restore."
+    fi
+    gosu node qmd collection add "$vault_name" "/data/$vault_name" 2>/dev/null || true
+    gosu node sh -c "qmd update -c $vault_name && qmd embed -c $vault_name" 2>/dev/null || true
+  done
+
+  # Background: backup both vaults to R2 and reindex every 12 hours
   (while true; do
-    sleep 300
-    if [ -n "$R2_PUBLIC_KNOWLEDGE_BUCKET" ]; then
-      rclone sync r2:${R2_PUBLIC_KNOWLEDGE_BUCKET} /data/public-knowledge --exclude ".remotely-save/**" 2>/dev/null
-      qmd update -c public-knowledge && qmd embed -c public-knowledge 2>/dev/null || true
-    fi
-    if [ -n "$R2_SECOND_BRAIN_BUCKET" ]; then
-      rclone sync r2:${R2_SECOND_BRAIN_BUCKET} /data/second-brain --exclude ".remotely-save/**" 2>/dev/null
-      qmd update -c second-brain && qmd embed -c second-brain 2>/dev/null || true
-    fi
+    sleep 43200
+    for vault_name in public-knowledge second-brain; do
+      case "$vault_name" in
+        public-knowledge) BUCKET="$R2_PUBLIC_KNOWLEDGE_BUCKET" ;;
+        second-brain)     BUCKET="$R2_SECOND_BRAIN_BUCKET" ;;
+      esac
+      if [ -z "$BUCKET" ]; then continue; fi
+      rclone sync "/data/$vault_name" "r2:${BUCKET}" --exclude ".remotely-save/**" --exclude ".obsidian/**" --exclude "*.zip" 2>/dev/null
+      qmd update -c "$vault_name" && qmd embed -c "$vault_name" 2>/dev/null || true
+    done
   done) &
 fi
 
