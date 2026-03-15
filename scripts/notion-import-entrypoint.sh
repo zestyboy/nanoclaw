@@ -64,8 +64,9 @@ echo "  Downloaded."
 
 EXTRACT_DIR="${WORK_DIR}/notion-export"
 mkdir -p "$EXTRACT_DIR"
-echo "Extracting outer zip..."
-unzip -q "${WORK_DIR}/${ZIP_NAME}" -d "$EXTRACT_DIR"
+echo "Extracting outer zip (using bsdtar for Unicode support)..."
+cd "$EXTRACT_DIR"
+bsdtar xf "${WORK_DIR}/${ZIP_NAME}"
 
 # Notion wraps large exports in nested zips (Part-1.zip, Part-2.zip, etc.)
 # Extract any inner zip files
@@ -73,10 +74,11 @@ INNER_ZIPS=$(find "$EXTRACT_DIR" -maxdepth 1 -name "*.zip" 2>/dev/null)
 if [ -n "$INNER_ZIPS" ]; then
   echo "  Found nested zip(s) — extracting..."
   for inner in $INNER_ZIPS; do
-    unzip -q -o "$inner" -d "$EXTRACT_DIR"
+    bsdtar xf "$inner" -C "$EXTRACT_DIR"
     rm "$inner"
   done
 fi
+cd /app
 
 # Find the actual export root (might be nested one level)
 EXPORT_ROOT="$EXTRACT_DIR"

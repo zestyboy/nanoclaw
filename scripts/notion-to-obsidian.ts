@@ -748,16 +748,20 @@ function discoverDatabases(exportRoot: string): DatabaseFolder[] {
     if (!matched) {
       // Skip non-database folders (Creator's Companion, Wiki, etc.)
       // Only treat as notes if it contains HTML files directly
-      const hasHtml = fs.readdirSync(path.join(searchRoot, entry.name))
-        .some(f => f.endsWith('.html'));
-      if (hasHtml) {
-        console.log(`  [?] Unrecognized folder: "${entry.name}" → will be treated as notes`);
-        results.push({
-          folderPath: path.join(searchRoot, entry.name),
-          folderName: entry.name,
-          kind: 'note',
-          targetFolder: '02 Notes',
-        });
+      try {
+        const hasHtml = fs.readdirSync(path.join(searchRoot, entry.name))
+          .some(f => f.endsWith('.html'));
+        if (hasHtml) {
+          console.log(`  [?] Unrecognized folder: "${entry.name}" → will be treated as notes`);
+          results.push({
+            folderPath: path.join(searchRoot, entry.name),
+            folderName: entry.name,
+            kind: 'note',
+            targetFolder: '02 Notes',
+          });
+        }
+      } catch {
+        console.log(`  [!] Cannot read folder: "${entry.name}" — skipping (likely encoding issue)`);
       }
     }
   }
