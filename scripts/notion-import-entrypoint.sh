@@ -86,37 +86,9 @@ if [ "$SUBDIRS" -eq 1 ]; then
   echo "  Export root: ${EXPORT_ROOT}"
 fi
 
-# Notion nests databases under "[v3] .../Databases & Components/"
-# Find the v3 Databases & Components folder (not archived versions)
-# Prefer paths containing "[v3]", fall back to any match
-DB_COMPONENTS=""
-while IFS= read -r -d '' dir; do
-  case "$dir" in
-    *"[v3]"*|*"v3"*)
-      DB_COMPONENTS="$dir"
-      break
-      ;;
-    *)
-      # Keep as fallback if no v3 found
-      [ -z "$DB_COMPONENTS" ] && DB_COMPONENTS="$dir"
-      ;;
-  esac
-done < <(find "$EXPORT_ROOT" -type d -name "Databases & Components" -print0 2>/dev/null)
-
-if [ -n "$DB_COMPONENTS" ]; then
-  echo "  Found Databases & Components at: ${DB_COMPONENTS}"
-  # Use cd+pwd to resolve encoding issues with smart quotes in paths
-  cd "$DB_COMPONENTS"
-  EXPORT_ROOT="$(pwd)"
-  cd /app
-fi
-
-echo "  Final export root: ${EXPORT_ROOT}"
-echo "  Contents:"
-ls "$EXPORT_ROOT" | head -20
-echo "  Verify exists via Node: "
-node -e "console.log(require('fs').existsSync(process.argv[1]))" "$EXPORT_ROOT"
+echo "  Export root: ${EXPORT_ROOT}"
 echo ""
+# The converter itself handles finding "Databases & Components" inside the export
 
 # --- Download vault infrastructure from R2 ---
 # Bases, Templates, Dashboards, and Home.md are already on R2

@@ -712,8 +712,14 @@ interface DatabaseFolder {
 }
 
 function discoverDatabases(exportRoot: string): DatabaseFolder[] {
+  // First, find the "Databases & Components" folder if it exists (Notion Ultimate Brain structure)
+  // Do this in Node.js to avoid bash encoding issues with smart quotes
+  const dbComponentsDir = findDatabasesFolder(exportRoot);
+  const searchRoot = dbComponentsDir || exportRoot;
+  console.log(`  Search root: ${searchRoot}`);
+
   const results: DatabaseFolder[] = [];
-  const entries = fs.readdirSync(exportRoot, { withFileTypes: true });
+  const entries = fs.readdirSync(searchRoot, { withFileTypes: true });
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
@@ -729,7 +735,7 @@ function discoverDatabases(exportRoot: string): DatabaseFolder[] {
         dbName.includes(folderName)
       ) {
         results.push({
-          folderPath: path.join(exportRoot, entry.name),
+          folderPath: path.join(searchRoot, entry.name),
           folderName: entry.name,
           kind: config.kind,
           targetFolder: config.folder,
@@ -740,17 +746,60 @@ function discoverDatabases(exportRoot: string): DatabaseFolder[] {
     }
 
     if (!matched) {
-      console.log(`  [?] Unrecognized folder: "${entry.name}" → will be treated as notes`);
-      results.push({
-        folderPath: path.join(exportRoot, entry.name),
-        folderName: entry.name,
-        kind: 'note',
-        targetFolder: '02 Notes',
-      });
+      // Skip non-database folders (Creator's Companion, Wiki, etc.)
+      // Only treat as notes if it contains HTML files directly
+      const hasHtml = fs.readdirSync(path.join(searchRoot, entry.name))
+        .some(f => f.endsWith('.html'));
+      if (hasHtml) {
+        console.log(`  [?] Unrecognized folder: "${entry.name}" → will be treated as notes`);
+        results.push({
+          folderPath: path.join(searchRoot, entry.name),
+          folderName: entry.name,
+          kind: 'note',
+          targetFolder: '02 Notes',
+        });
+      }
     }
   }
 
   return results;
+}
+
+/** Recursively find the "Databases & Components" folder, preferring v3 paths */
+function findDatabasesFolder(root: string): string | null {
+  const candidates: string[] = [];
+
+  function walk(dir: string, depth: number): void {
+    if (depth > 5) return; // Don't go too deep
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const fullPath = path.join(dir, entry.name);
+        if (entry.name === 'Databases & Components') {
+          candidates.push(fullPath);
+        } else {
+          walk(fullPath, depth + 1);
+        }
+      }
+    } catch {
+      // Skip unreadable dirs
+    }
+  }
+
+  walk(root, 0);
+
+  if (candidates.length === 0) return null;
+
+  // Prefer paths containing "v3" (the active version, not archived)
+  const v3 = candidates.find(c => c.toLowerCase().includes('[v3]') || c.toLowerCase().includes('v3'));
+  if (v3) {
+    console.log(`  Found v3 Databases & Components: ${v3}`);
+    return v3;
+  }
+
+  console.log(`  Found Databases & Components: ${candidates[0]}`);
+  return candidates[0];
 }
 
 // ---------------------------------------------------------------------------
