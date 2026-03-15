@@ -18,8 +18,6 @@ provider = Cloudflare
 access_key_id = ${R2_ACCESS_KEY}
 secret_access_key = ${R2_SECRET_KEY}
 endpoint = ${R2_ENDPOINT}
-acl = private
-no_check_bucket = true
 EOF
 echo "  rclone configured."
 echo ""
@@ -30,7 +28,7 @@ echo "Verifying R2 access..."
 OUTPUT_BUCKET="${R2_SECOND_BRAIN_BUCKET:-second-brain}"
 IMPORT_BUCKET="$OUTPUT_BUCKET"
 
-rclone lsf "r2:${IMPORT_BUCKET}/" > /dev/null 2>&1 || {
+rclone lsf "r2:${IMPORT_BUCKET}/" > /dev/null || {
   echo "ERROR: Cannot access r2:${IMPORT_BUCKET}/"
   echo "Check R2_ACCESS_KEY, R2_SECRET_KEY, R2_ENDPOINT env vars."
   exit 1
