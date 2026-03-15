@@ -86,9 +86,32 @@ if [ "$SUBDIRS" -eq 1 ]; then
   echo "  Export root: ${EXPORT_ROOT}"
 fi
 
+# Smart quotes in Notion folder names cause encoding issues in Node.js.
+# Use bash find (which handles raw bytes fine) to locate the database folder,
+# then create a symlink from a clean path that Node.js can access.
+DB_DIR=""
+while IFS= read -r -d '' dir; do
+  case "$dir" in
+    *v3*|*"[v3]"*)
+      DB_DIR="$dir"
+      break
+      ;;
+    *)
+      [ -z "$DB_DIR" ] && DB_DIR="$dir"
+      ;;
+  esac
+done < <(find "$EXPORT_ROOT" -type d -name "Databases & Components" -print0 2>/dev/null)
+
+if [ -n "$DB_DIR" ]; then
+  echo "  Found Databases & Components, creating clean symlink..."
+  ln -sfn "$DB_DIR" /tmp/notion-import/databases
+  EXPORT_ROOT="/tmp/notion-import/databases"
+else
+  echo "  No Databases & Components folder found, using export root directly."
+fi
+
 echo "  Export root: ${EXPORT_ROOT}"
 echo ""
-# The converter itself handles finding "Databases & Components" inside the export
 
 # --- Download vault infrastructure from R2 ---
 # Bases, Templates, Dashboards, and Home.md are already on R2
