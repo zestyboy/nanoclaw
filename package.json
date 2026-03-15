@@ -16,7 +16,8 @@
     "setup": "tsx setup/index.ts",
     "auth": "tsx src/whatsapp-auth.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "notion-import": "tsx scripts/notion-to-obsidian.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",
@@ -30,11 +31,15 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
+    "@types/jsdom": "^28.0.0",
     "@types/node": "^22.10.0",
+    "@types/turndown": "^5.0.6",
     "@vitest/coverage-v8": "^4.0.18",
     "husky": "^9.1.7",
+    "jsdom": "^28.1.0",
     "prettier": "^3.8.1",
     "tsx": "^4.19.0",
+    "turndown": "^7.2.2",
     "typescript": "^5.7.0",
     "vitest": "^4.0.18"
   },
