@@ -26,8 +26,9 @@ echo ""
 
 # --- Verify R2 access ---
 echo "Verifying R2 access..."
-IMPORT_BUCKET="${R2_NOTION_IMPORT_BUCKET:-second-brain-import}"
+# Use the same bucket for import and output — the R2 API token is scoped to this bucket
 OUTPUT_BUCKET="${R2_SECOND_BRAIN_BUCKET:-second-brain}"
+IMPORT_BUCKET="$OUTPUT_BUCKET"
 
 rclone lsf "r2:${IMPORT_BUCKET}/" > /dev/null 2>&1 || {
   echo "ERROR: Cannot access r2:${IMPORT_BUCKET}/"
@@ -100,7 +101,8 @@ echo ""
 
 # --- Upload converted vault to R2 ---
 echo "Uploading converted vault to R2..."
-rclone sync "$OUTPUT_DIR" "r2:${OUTPUT_BUCKET}/" \
+# Use copy (not sync) to avoid deleting the zip or other existing files
+rclone copy "$OUTPUT_DIR" "r2:${OUTPUT_BUCKET}/" \
   --exclude ".obsidian/**" \
   --progress
 echo ""
