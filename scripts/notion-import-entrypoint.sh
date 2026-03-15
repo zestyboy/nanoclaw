@@ -3,7 +3,9 @@
 # Entrypoint for the Notion Import Railway service.
 # Configures rclone from env vars, runs the import, then exits.
 # =============================================================================
-set -euo pipefail
+set -uo pipefail
+# On error, sleep so we can SSH in to debug instead of crashing
+trap 'echo "FAILED — sleeping 10 min for SSH debugging..."; sleep 600' ERR
 
 echo "=== Notion Import Service ==="
 echo ""
@@ -103,12 +105,17 @@ done < <(find "$EXPORT_ROOT" -type d -name "Databases & Components" -print0 2>/d
 
 if [ -n "$DB_COMPONENTS" ]; then
   echo "  Found Databases & Components at: ${DB_COMPONENTS}"
-  EXPORT_ROOT="$DB_COMPONENTS"
+  # Use cd+pwd to resolve encoding issues with smart quotes in paths
+  cd "$DB_COMPONENTS"
+  EXPORT_ROOT="$(pwd)"
+  cd /app
 fi
 
 echo "  Final export root: ${EXPORT_ROOT}"
 echo "  Contents:"
 ls "$EXPORT_ROOT" | head -20
+echo "  Verify exists via Node: "
+node -e "console.log(require('fs').existsSync(process.argv[1]))" "$EXPORT_ROOT"
 echo ""
 
 # --- Download vault infrastructure from R2 ---
