@@ -47,9 +47,10 @@ export const GROUPS_DIR = IS_RAILWAY
 export const DATA_DIR = IS_RAILWAY
   ? RAILWAY_DATA_DIR
   : path.resolve(PROJECT_ROOT, 'data');
-export const PROJECTS_DIR =
-  process.env.NANOCLAW_PROJECTS_DIR ||
-  path.join(HOME_DIR, 'development', 'nanoclaw-projects');
+export const PROJECTS_DIR = IS_RAILWAY
+  ? path.resolve(RAILWAY_DATA_DIR, 'projects')
+  : process.env.NANOCLAW_PROJECTS_DIR ||
+    path.join(HOME_DIR, 'development', 'nanoclaw-projects');
 export const PUBLIC_KNOWLEDGE_DIR =
   process.env.NANOCLAW_PUBLIC_KNOWLEDGE_DIR ||
   (IS_RAILWAY
