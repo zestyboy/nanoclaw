@@ -5,6 +5,7 @@ import * as path from 'path';
 import {
   convert,
   decodeFilesystemName,
+  listDatabases,
   stripNotionUuid,
 } from './notion-to-obsidian';
 
@@ -279,13 +280,176 @@ describe('source path resolution', () => {
     await convert(exportDir, outputDir);
 
     expect(
-      fs.existsSync(path.join(outputDir, 'Attachments/photo.png'))
+      fs.existsSync(path.join(outputDir, 'Attachments/Notes/assets/photo.png'))
     ).toBe(true);
     const note = fs.readFileSync(
       path.join(outputDir, '02 Notes/Photo Note.md'),
       'utf-8'
     );
-    expect(note).toContain('Attachments/photo.png');
+    expect(note).toContain('![[Attachments/Notes/assets/photo.png]]');
+  });
+
+  it('rewrites URL-encoded image filenames to Obsidian embeds', async () => {
+    tempRoot = makeTempDir('notion-export-');
+    const exportDir = path.join(tempRoot, 'export');
+    const outputDir = path.join(tempRoot, 'output');
+    const notesDir = path.join(exportDir, 'Notes abc123def456789012345678901234');
+
+    writeFile(
+      path.join(notesDir, 'Encoded Image abc123def456789012345678901236.html'),
+      `<!doctype html><html><head><title>Encoded Image</title></head><body class="page-body"><img src="assets/Photo%20One%20abc123def456789012345678901237.png" /></body></html>`
+    );
+    writeFile(
+      path.join(
+        notesDir,
+        'assets/Photo One abc123def456789012345678901237.png'
+      ),
+      Buffer.from('png')
+    );
+
+    await convert(exportDir, outputDir);
+
+    expect(
+      fs.existsSync(
+        path.join(outputDir, 'Attachments/Notes/assets/Photo One.png')
+      )
+    ).toBe(true);
+    const note = fs.readFileSync(
+      path.join(outputDir, '02 Notes/Encoded Image.md'),
+      'utf-8'
+    );
+    expect(note).toContain('![[Attachments/Notes/assets/Photo One.png]]');
+  });
+
+  it('rewrites local file links to Obsidian wikilinks with labels', async () => {
+    tempRoot = makeTempDir('notion-export-');
+    const exportDir = path.join(tempRoot, 'export');
+    const outputDir = path.join(tempRoot, 'output');
+    const notesDir = path.join(exportDir, 'Notes abc123def456789012345678901234');
+
+    writeFile(
+      path.join(notesDir, 'Guide Link abc123def456789012345678901236.html'),
+      `<!doctype html><html><head><title>Guide Link</title></head><body class="page-body"><p><a href="files/Guide%20abc123def456789012345678901237.pdf">Quarterly guide</a></p></body></html>`
+    );
+    writeFile(
+      path.join(notesDir, 'files/Guide abc123def456789012345678901237.pdf'),
+      Buffer.from('pdf')
+    );
+
+    await convert(exportDir, outputDir);
+
+    expect(
+      fs.existsSync(path.join(outputDir, 'Attachments/Notes/files/Guide.pdf'))
+    ).toBe(true);
+    const note = fs.readFileSync(
+      path.join(outputDir, '02 Notes/Guide Link.md'),
+      'utf-8'
+    );
+    expect(note).toContain(
+      '[[Attachments/Notes/files/Guide.pdf|Quarterly guide]]'
+    );
+  });
+
+  it('handles smart-quote attachment filenames', async () => {
+    tempRoot = makeTempDir('notion-export-');
+    const exportDir = path.join(tempRoot, 'export');
+    const outputDir = path.join(tempRoot, 'output');
+    const notesDir = path.join(exportDir, 'Notes abc123def456789012345678901234');
+
+    writeFile(
+      path.join(notesDir, 'Smart Quote abc123def456789012345678901236.html'),
+      `<!doctype html><html><head><title>Smart Quote</title></head><body class="page-body"><img src="assets/Niven%E2%80%99s%20Photo%20abc123def456789012345678901234.png" /></body></html>`
+    );
+    writeFile(
+      path.join(
+        notesDir,
+        'assets/Niven’s Photo abc123def456789012345678901234.png'
+      ),
+      Buffer.from('png')
+    );
+
+    await convert(exportDir, outputDir);
+
+    expect(
+      fs.existsSync(
+        path.join(outputDir, 'Attachments/Notes/assets/Niven’s Photo.png')
+      )
+    ).toBe(true);
+    const note = fs.readFileSync(
+      path.join(outputDir, '02 Notes/Smart Quote.md'),
+      'utf-8'
+    );
+    expect(note).toContain('![[Attachments/Notes/assets/Niven’s Photo.png]]');
+  });
+
+  it('preserves subpaths for duplicate cleaned basenames', async () => {
+    tempRoot = makeTempDir('notion-export-');
+    const exportDir = path.join(tempRoot, 'export');
+    const outputDir = path.join(tempRoot, 'output');
+    const notesDir = path.join(exportDir, 'Notes abc123def456789012345678901234');
+
+    writeFile(
+      path.join(notesDir, 'First Photo abc123def456789012345678901236.html'),
+      `<!doctype html><html><head><title>First Photo</title></head><body class="page-body"><img src="assets/photo abc123def456789012345678901237.png" /></body></html>`
+    );
+    writeFile(
+      path.join(notesDir, 'Second Photo abc123def456789012345678901238.html'),
+      `<!doctype html><html><head><title>Second Photo</title></head><body class="page-body"><img src="other/photo deadbeefdeadbeefdeadbeefdeadbeef.png" /></body></html>`
+    );
+    writeFile(
+      path.join(notesDir, 'assets/photo abc123def456789012345678901237.png'),
+      Buffer.from('png-one')
+    );
+    writeFile(
+      path.join(notesDir, 'other/photo deadbeefdeadbeefdeadbeefdeadbeef.png'),
+      Buffer.from('png-two')
+    );
+
+    await convert(exportDir, outputDir);
+
+    expect(
+      fs.existsSync(path.join(outputDir, 'Attachments/Notes/assets/photo.png'))
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(outputDir, 'Attachments/Notes/other/photo.png'))
+    ).toBe(true);
+  });
+
+  it('adds a deterministic hash suffix when cleaned paths still collide', async () => {
+    tempRoot = makeTempDir('notion-export-');
+    const exportDir = path.join(tempRoot, 'export');
+    const outputDir = path.join(tempRoot, 'output');
+    const notesDir = path.join(exportDir, 'Notes abc123def456789012345678901234');
+
+    writeFile(
+      path.join(notesDir, 'Collision One abc123def456789012345678901236.html'),
+      `<!doctype html><html><head><title>Collision One</title></head><body class="page-body"><img src="assets abc123def456789012345678901237/photo abc123def456789012345678901238.png" /></body></html>`
+    );
+    writeFile(
+      path.join(notesDir, 'Collision Two abc123def456789012345678901239.html'),
+      `<!doctype html><html><head><title>Collision Two</title></head><body class="page-body"><img src="assets/photo deadbeefdeadbeefdeadbeefdeadbeef.png" /></body></html>`
+    );
+    writeFile(
+      path.join(
+        notesDir,
+        'assets abc123def456789012345678901237/photo abc123def456789012345678901238.png'
+      ),
+      Buffer.from('png-one')
+    );
+    writeFile(
+      path.join(notesDir, 'assets/photo deadbeefdeadbeefdeadbeefdeadbeef.png'),
+      Buffer.from('png-two')
+    );
+
+    await convert(exportDir, outputDir);
+
+    const attachmentFiles = fs.readdirSync(
+      path.join(outputDir, 'Attachments/Notes/assets')
+    );
+    expect(attachmentFiles).toContain('photo.png');
+    expect(attachmentFiles.some((file) => /^photo-[0-9a-f]{8}\.png$/.test(file))).toBe(
+      true
+    );
   });
 
   it('only falls back to basename lookup when the basename is unique', async () => {
@@ -311,5 +475,122 @@ describe('source path resolution', () => {
       'utf-8'
     );
     expect(note).not.toContain('Attachments/photo.png');
+    expect(note).toContain('![](photo.png)');
+  });
+});
+
+describe('single database mode', () => {
+  let tempRoot: string;
+
+  afterAll(() => {
+    if (tempRoot && fs.existsSync(tempRoot)) {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('appends duplicate titles safely across separate conversion runs', async () => {
+    tempRoot = makeTempDir('notion-export-single-db-');
+    const exportDir = path.join(tempRoot, 'export');
+    const outputDir = path.join(tempRoot, 'output');
+    const notesDirA = path.join(
+      exportDir,
+      'Reference Notes A abc123def456789012345678901234'
+    );
+    const notesDirB = path.join(
+      exportDir,
+      'Reference Notes B abc123def456789012345678901235'
+    );
+
+    writeFile(
+      path.join(notesDirA, 'Shared Title abc123def456789012345678901236.html'),
+      '<!doctype html><html><head><title>Shared Title</title></head><body class="page-body"><p>From notes</p></body></html>'
+    );
+    writeFile(
+      path.join(notesDirB, 'Shared Title abc123def456789012345678901237.html'),
+      '<!doctype html><html><head><title>Shared Title</title></head><body class="page-body"><p>From other notes</p></body></html>'
+    );
+
+    const databases = listDatabases(exportDir);
+    expect(databases).toHaveLength(2);
+    const firstPath = databases.find((db) =>
+      db.logicalPath.includes('Reference Notes A')
+    )?.logicalPath;
+    const secondPath = databases.find((db) =>
+      db.logicalPath.includes('Reference Notes B')
+    )?.logicalPath;
+    expect(firstPath).toBeTruthy();
+    expect(secondPath).toBeTruthy();
+
+    await convert(exportDir, outputDir, {
+      databaseLogicalPath: firstPath!,
+      copyInfrastructure: false,
+    });
+    await convert(exportDir, outputDir, {
+      databaseLogicalPath: secondPath!,
+      copyInfrastructure: false,
+    });
+
+    expect(
+      fs.existsSync(path.join(outputDir, '02 Notes/Shared Title.md'))
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(outputDir, '02 Notes/Shared Title (2).md'))
+    ).toBe(true);
+  });
+
+  it('appends attachments safely across separate conversion runs', async () => {
+    tempRoot = makeTempDir('notion-export-single-db-');
+    const exportDir = path.join(tempRoot, 'export');
+    const outputDir = path.join(tempRoot, 'output');
+    const notesDirA = path.join(
+      exportDir,
+      'Reference Notes A abc123def456789012345678901234'
+    );
+    const notesDirB = path.join(
+      exportDir,
+      'Reference Notes B abc123def456789012345678901235'
+    );
+
+    writeFile(
+      path.join(notesDirA, 'Alpha abc123def456789012345678901236.html'),
+      '<!doctype html><html><head><title>Alpha</title></head><body class="page-body"><img src="assets/photo abc123def456789012345678901237.png" /></body></html>'
+    );
+    writeFile(
+      path.join(notesDirB, 'Beta abc123def456789012345678901238.html'),
+      '<!doctype html><html><head><title>Beta</title></head><body class="page-body"><img src="assets/photo abc123def456789012345678901239.png" /></body></html>'
+    );
+    writeFile(
+      path.join(notesDirA, 'assets/photo abc123def456789012345678901237.png'),
+      Buffer.from('png-one')
+    );
+    writeFile(
+      path.join(notesDirB, 'assets/photo abc123def456789012345678901239.png'),
+      Buffer.from('png-two')
+    );
+
+    const databases = listDatabases(exportDir);
+    const firstPath = databases.find((db) =>
+      db.logicalPath.includes('Reference Notes A')
+    )?.logicalPath;
+    const secondPath = databases.find((db) =>
+      db.logicalPath.includes('Reference Notes B')
+    )?.logicalPath;
+
+    await convert(exportDir, outputDir, {
+      databaseLogicalPath: firstPath!,
+      copyInfrastructure: false,
+    });
+    await convert(exportDir, outputDir, {
+      databaseLogicalPath: secondPath!,
+      copyInfrastructure: false,
+    });
+
+    const attachmentRoot = path.join(outputDir, 'Attachments');
+    expect(
+      fs.existsSync(path.join(attachmentRoot, 'Reference Notes A/assets/photo.png'))
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(attachmentRoot, 'Reference Notes B/assets/photo.png'))
+    ).toBe(true);
   });
 });

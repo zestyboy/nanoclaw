@@ -3,7 +3,7 @@
 # Entrypoint for the Notion Import Railway service.
 # Configures rclone from env vars, runs the import, then exits.
 # =============================================================================
-set -uo pipefail
+set -euo pipefail
 # On error, sleep so we can SSH in to debug instead of crashing
 trap 'echo "FAILED — sleeping 10 min for SSH debugging..."; sleep 600' ERR
 
@@ -93,30 +93,6 @@ if [ "$SUBDIRS" -eq 1 ]; then
   echo "  Export root: ${EXPORT_ROOT}"
 fi
 
-# Smart quotes in Notion folder names cause encoding issues in Node.js.
-# Use bash find (which handles raw bytes fine) to locate the database folder,
-# then create a symlink from a clean path that Node.js can access.
-DB_DIR=""
-while IFS= read -r -d '' dir; do
-  case "$dir" in
-    *v3*|*"[v3]"*)
-      DB_DIR="$dir"
-      break
-      ;;
-    *)
-      [ -z "$DB_DIR" ] && DB_DIR="$dir"
-      ;;
-  esac
-done < <(find "$EXPORT_ROOT" -type d -name "Databases & Components" -print0 2>/dev/null)
-
-if [ -n "$DB_DIR" ]; then
-  echo "  Found Databases & Components, creating clean symlink..."
-  ln -sfn "$DB_DIR" /tmp/notion-import/databases
-  EXPORT_ROOT="/tmp/notion-import/databases"
-else
-  echo "  No Databases & Components folder found, using export root directly."
-fi
-
 echo "  Export root: ${EXPORT_ROOT}"
 echo ""
 
@@ -137,10 +113,41 @@ echo ""
 OUTPUT_DIR="${WORK_DIR}/vault"
 export VAULT_INFRA_DIR="$INFRA_DIR"
 
-echo "Running Notion → Obsidian conversion..."
-echo ""
+echo "Discovering database folders..."
 cd /app
-npx tsx scripts/notion-to-obsidian.ts "$EXPORT_ROOT" "$OUTPUT_DIR"
+mapfile -t DATABASE_PATHS < <(
+  npx tsx scripts/notion-to-obsidian.ts --list-databases "$EXPORT_ROOT"
+)
+
+if [ "${#DATABASE_PATHS[@]}" -eq 0 ]; then
+  echo "ERROR: No Notion database folders were discovered under ${EXPORT_ROOT}"
+  exit 1
+fi
+
+echo "  Found ${#DATABASE_PATHS[@]} database folders."
+for db_path in "${DATABASE_PATHS[@]}"; do
+  echo "  - ${db_path}"
+done
+echo ""
+
+echo "Running Notion → Obsidian conversion..."
+for idx in "${!DATABASE_PATHS[@]}"; do
+  db_path="${DATABASE_PATHS[$idx]}"
+  echo ""
+  echo "=== Database $((idx + 1))/${#DATABASE_PATHS[@]}: ${db_path} ==="
+  if [ "$idx" -eq 0 ]; then
+    npx tsx scripts/notion-to-obsidian.ts \
+      --database "$db_path" \
+      "$EXPORT_ROOT" \
+      "$OUTPUT_DIR"
+  else
+    npx tsx scripts/notion-to-obsidian.ts \
+      --database "$db_path" \
+      "$EXPORT_ROOT" \
+      "$OUTPUT_DIR" \
+      --skip-infra
+  fi
+done
 echo ""
 
 # --- Upload converted vault to R2 ---
