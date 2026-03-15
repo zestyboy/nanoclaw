@@ -1,21 +1,32 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import {
+  convert,
+  decodeFilesystemName,
+  stripNotionUuid,
+} from './notion-to-obsidian';
 
 const FIXTURES_DIR = path.resolve(__dirname, 'test-fixtures/notion-export');
 const OUTPUT_DIR = path.resolve('/tmp/test-vault-output-vitest');
 
+function writeFile(filePath: string, content: string | Buffer): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content);
+}
+
+function makeTempDir(prefix: string): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
 describe('notion-to-obsidian converter', () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     // Clean and run the converter
     if (fs.existsSync(OUTPUT_DIR)) {
       fs.rmSync(OUTPUT_DIR, { recursive: true });
     }
-    execSync(
-      `npx tsx scripts/notion-to-obsidian.ts "${FIXTURES_DIR}" "${OUTPUT_DIR}"`,
-      { cwd: path.resolve(__dirname, '..'), timeout: 30000 }
-    );
+    await convert(FIXTURES_DIR, OUTPUT_DIR);
   });
 
   afterAll(() => {
@@ -216,5 +227,89 @@ describe('notion-to-obsidian converter', () => {
       // font-size 1.5em → h2
       expect(quirksNote).toContain('## Important Section');
     });
+  });
+});
+
+describe('filename decoding', () => {
+  it('preserves UTF-8 names', () => {
+    expect(decodeFilesystemName(Buffer.from('Niven’s Notes', 'utf8'))).toBe(
+      'Niven’s Notes'
+    );
+  });
+
+  it('decodes Windows-1252 smart quotes', () => {
+    const raw = Buffer.from([
+      0x4e, 0x69, 0x76, 0x65, 0x6e, 0x92, 0x73, 0x20, 0x4e, 0x6f, 0x74, 0x65,
+      0x73,
+    ]);
+    expect(decodeFilesystemName(raw)).toBe('Niven’s Notes');
+  });
+
+  it('still strips Notion UUIDs after decoding', () => {
+    const raw = Buffer.from([
+      0x4e, 0x69, 0x76, 0x65, 0x6e, 0x92, 0x73, 0x20, 0x4e, 0x6f, 0x74, 0x65,
+      0x73, 0x20, 0x61, 0x62, 0x63, 0x31, 0x32, 0x33, 0x64, 0x65, 0x66, 0x34,
+      0x35, 0x36, 0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34,
+    ]);
+    expect(stripNotionUuid(decodeFilesystemName(raw))).toBe('Niven’s Notes');
+  });
+});
+
+describe('source path resolution', () => {
+  let tempRoot: string;
+
+  afterAll(() => {
+    if (tempRoot && fs.existsSync(tempRoot)) {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves logical relative paths for attachments', async () => {
+    tempRoot = makeTempDir('notion-export-');
+    const exportDir = path.join(tempRoot, 'export');
+    const outputDir = path.join(tempRoot, 'output');
+    const notesDir = path.join(exportDir, 'Notes abc123def456789012345678901234');
+
+    writeFile(
+      path.join(notesDir, 'Photo Note abc123def456789012345678901235.html'),
+      `<!doctype html><html><head><title>Photo Note</title></head><body class="page-body"><img src="assets/photo.png" /></body></html>`
+    );
+    writeFile(path.join(notesDir, 'assets/photo.png'), Buffer.from('png'));
+
+    await convert(exportDir, outputDir);
+
+    expect(
+      fs.existsSync(path.join(outputDir, 'Attachments/photo.png'))
+    ).toBe(true);
+    const note = fs.readFileSync(
+      path.join(outputDir, '02 Notes/Photo Note.md'),
+      'utf-8'
+    );
+    expect(note).toContain('Attachments/photo.png');
+  });
+
+  it('only falls back to basename lookup when the basename is unique', async () => {
+    tempRoot = makeTempDir('notion-export-');
+    const exportDir = path.join(tempRoot, 'export');
+    const outputDir = path.join(tempRoot, 'output');
+    const notesDir = path.join(exportDir, 'Notes abc123def456789012345678901234');
+
+    writeFile(
+      path.join(notesDir, 'Ambiguous Photo abc123def456789012345678901236.html'),
+      `<!doctype html><html><head><title>Ambiguous Photo</title></head><body class="page-body"><img src="photo.png" /></body></html>`
+    );
+    writeFile(path.join(notesDir, 'assets/photo.png'), Buffer.from('png-one'));
+    writeFile(path.join(notesDir, 'other/photo.png'), Buffer.from('png-two'));
+
+    await convert(exportDir, outputDir);
+
+    expect(
+      fs.existsSync(path.join(outputDir, 'Attachments/photo.png'))
+    ).toBe(false);
+    const note = fs.readFileSync(
+      path.join(outputDir, '02 Notes/Ambiguous Photo.md'),
+      'utf-8'
+    );
+    expect(note).not.toContain('Attachments/photo.png');
   });
 });

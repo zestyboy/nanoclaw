@@ -136,7 +136,7 @@ const TYPE_PROPERTY_BY_KIND: Record<string, string> = {
 const UUID_PATTERN = /\s+[0-9a-f]{20,32}$/;
 const UUID_PATTERN_WITH_EXT = /\s+[0-9a-f]{20,32}(\.\w+)$/;
 
-function stripNotionUuid(name: string): string {
+export function stripNotionUuid(name: string): string {
   // Strip UUID from name, preserving extension if present
   return name.replace(UUID_PATTERN_WITH_EXT, '$1').replace(UUID_PATTERN, '');
 }
@@ -242,12 +242,190 @@ interface NotionPage {
   /** Markdown body content */
   body: string;
   /** Attachment files to copy (source → target relative path) */
-  attachments: Array<{ source: string; targetPath: string }>;
+  attachments: Array<{ source: RawPath; targetPath: string }>;
 }
 
-// Global filename mapping: clean name → all matching files
-// Used to resolve internal links
-const fileNameMap = new Map<string, string>();
+type RawPath = Buffer;
+
+interface SourceEntry {
+  rawPath: RawPath;
+  logicalPath: string;
+  displayName: string;
+  isDirectory: boolean;
+}
+
+interface HtmlFile extends SourceEntry {
+  isDirectory: false;
+}
+
+interface DatabaseFolder {
+  folder: SourceEntry;
+  kind: string;
+  targetFolder: string;
+}
+
+interface SourceIndex {
+  byLogicalPath: Map<string, SourceEntry>;
+  byBasename: Map<string, SourceEntry[]>;
+}
+
+const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
+const WINDOWS_1252_MAP: Record<number, string> = {
+  0x80: '\u20ac',
+  0x82: '\u201a',
+  0x83: '\u0192',
+  0x84: '\u201e',
+  0x85: '\u2026',
+  0x86: '\u2020',
+  0x87: '\u2021',
+  0x88: '\u02c6',
+  0x89: '\u2030',
+  0x8a: '\u0160',
+  0x8b: '\u2039',
+  0x8c: '\u0152',
+  0x8e: '\u017d',
+  0x91: '\u2018',
+  0x92: '\u2019',
+  0x93: '\u201c',
+  0x94: '\u201d',
+  0x95: '\u2022',
+  0x96: '\u2013',
+  0x97: '\u2014',
+  0x98: '\u02dc',
+  0x99: '\u2122',
+  0x9a: '\u0161',
+  0x9b: '\u203a',
+  0x9c: '\u0153',
+  0x9e: '\u017e',
+  0x9f: '\u0178',
+};
+
+function toRawPath(pathValue: string): RawPath {
+  return Buffer.from(pathValue);
+}
+
+function joinRawPath(parent: RawPath, child: Buffer | string): RawPath {
+  const childBuffer = typeof child === 'string' ? Buffer.from(child) : child;
+  if (parent[parent.length - 1] === 0x2f) {
+    return Buffer.concat([parent, childBuffer]);
+  }
+  return Buffer.concat([parent, Buffer.from('/'), childBuffer]);
+}
+
+function decodeWindows1252(input: Buffer): string {
+  let decoded = '';
+  for (const byte of input) {
+    decoded += WINDOWS_1252_MAP[byte] || String.fromCharCode(byte);
+  }
+  return decoded;
+}
+
+export function decodeFilesystemName(input: Buffer): string {
+  try {
+    const decoded = UTF8_DECODER.decode(input);
+    if (!decoded.includes('\uFFFD')) {
+      return decoded.normalize('NFC');
+    }
+  } catch {
+    // Fall back to Windows-1252 decoding below.
+  }
+  return decodeWindows1252(input).normalize('NFC');
+}
+
+function normalizeLookupPath(input: string): string {
+  const normalized = path.posix
+    .normalize(input.replace(/\\/g, '/'))
+    .replace(/^\/+/, '');
+  return normalized === '.'
+    ? ''
+    : normalized.normalize('NFC').toLowerCase();
+}
+
+function stripQueryAndHash(input: string): string {
+  return input.split('#')[0]?.split('?')[0] || '';
+}
+
+function readdirRaw(dir: RawPath): fs.Dirent<Buffer>[] {
+  return fs.readdirSync(dir, {
+    encoding: 'buffer',
+    withFileTypes: true,
+  }) as fs.Dirent<Buffer>[];
+}
+
+function makeSourceEntry(
+  parentRawPath: RawPath,
+  parentLogicalPath: string,
+  entry: fs.Dirent<Buffer>
+): SourceEntry {
+  const displayName = decodeFilesystemName(entry.name);
+  return {
+    rawPath: joinRawPath(parentRawPath, entry.name),
+    logicalPath: parentLogicalPath
+      ? path.posix.join(parentLogicalPath, displayName)
+      : displayName,
+    displayName,
+    isDirectory: entry.isDirectory(),
+  };
+}
+
+function buildSourceIndex(exportRoot: string): SourceIndex {
+  const byLogicalPath = new Map<string, SourceEntry>();
+  const byBasename = new Map<string, SourceEntry[]>();
+
+  function walk(rawDir: RawPath, logicalDir: string): void {
+    for (const entry of readdirRaw(rawDir)) {
+      const node = makeSourceEntry(rawDir, logicalDir, entry);
+      const logicalKey = normalizeLookupPath(node.logicalPath);
+      byLogicalPath.set(logicalKey, node);
+
+      const basenameKey = normalizeLookupPath(node.displayName);
+      const basenameEntries = byBasename.get(basenameKey) || [];
+      basenameEntries.push(node);
+      byBasename.set(basenameKey, basenameEntries);
+
+      if (node.isDirectory) {
+        walk(node.rawPath, node.logicalPath);
+      }
+    }
+  }
+
+  walk(toRawPath(exportRoot), '');
+  return { byLogicalPath, byBasename };
+}
+
+function resolveSourceEntry(
+  sourceIndex: SourceIndex,
+  currentLogicalDir: string,
+  rawReference: string
+): SourceEntry | null {
+  const cleanReference = stripQueryAndHash(rawReference).trim();
+  if (!cleanReference) {
+    return null;
+  }
+
+  const normalizedReference = normalizeLookupPath(cleanReference);
+  const relativeKey = normalizeLookupPath(
+    path.posix.join(currentLogicalDir, cleanReference)
+  );
+
+  const directMatch =
+    sourceIndex.byLogicalPath.get(relativeKey) ||
+    sourceIndex.byLogicalPath.get(normalizedReference);
+  if (directMatch) {
+    return directMatch;
+  }
+
+  const basename = path.posix.basename(cleanReference);
+  const basenameMatches = (sourceIndex.byBasename.get(
+    normalizeLookupPath(basename)
+  ) || []).filter((entry) => !entry.isDirectory);
+
+  if (basenameMatches.length === 1) {
+    return basenameMatches[0];
+  }
+
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Notion DOM fixes (patterns from the Obsidian Importer plugin)
@@ -312,17 +490,17 @@ function fixToggleHeadings(root: Element): void {
 // ---------------------------------------------------------------------------
 
 function parseNotionHtml(
-  htmlPath: string,
-  exportRoot: string,
+  htmlFile: HtmlFile,
   kind: string,
-  targetFolder: string
+  targetFolder: string,
+  sourceIndex: SourceIndex
 ): NotionPage {
-  const html = fs.readFileSync(htmlPath, 'utf-8');
+  const html = fs.readFileSync(htmlFile.rawPath, 'utf-8');
   const dom = new JSDOM(html);
   const doc = dom.window.document;
 
   // Extract title: prefer <title> element (full title), fall back to filename
-  const basename = path.basename(htmlPath, '.html');
+  const basename = htmlFile.displayName.replace(/\.html$/i, '');
   const titleEl = doc.querySelector('title');
   const title = titleEl?.textContent?.trim() || stripNotionUuid(basename);
 
@@ -438,8 +616,8 @@ function parseNotionHtml(
   body = body.replace(/\n{3,}/g, '\n\n').trim();
 
   // Collect attachments
-  const attachments: Array<{ source: string; targetPath: string }> = [];
-  const htmlDir = path.dirname(htmlPath);
+  const attachments: Array<{ source: RawPath; targetPath: string }> = [];
+  const htmlDir = path.posix.dirname(htmlFile.logicalPath);
 
   // Look for attachment references in the HTML (images, files)
   const images = doc.querySelectorAll('img');
@@ -448,16 +626,22 @@ function parseNotionHtml(
     if (!src || src.startsWith('http://') || src.startsWith('https://')) continue;
     try {
       const decodedSrc = decodeURIComponent(src);
-      const absPath = path.resolve(htmlDir, decodedSrc);
-      if (fs.existsSync(absPath)) {
-        const attachName = stripNotionUuid(path.basename(decodedSrc));
+      const resolvedEntry = resolveSourceEntry(sourceIndex, htmlDir, decodedSrc);
+      if (resolvedEntry && !resolvedEntry.isDirectory) {
+        const attachName = stripNotionUuid(
+          path.posix.basename(resolvedEntry.logicalPath)
+        );
         attachments.push({
-          source: absPath,
+          source: resolvedEntry.rawPath,
           targetPath: `Attachments/${attachName}`,
         });
         // Update body to reference new attachment path
         body = body.replace(
           new RegExp(escapeRegex(src), 'g'),
+          `Attachments/${attachName}`
+        );
+        body = body.replace(
+          new RegExp(escapeRegex(decodedSrc), 'g'),
           `Attachments/${attachName}`
         );
       }
@@ -466,8 +650,8 @@ function parseNotionHtml(
     }
   }
 
-  return {
-    sourcePath: path.relative(exportRoot, htmlPath),
+  const page: NotionPage = {
+    sourcePath: htmlFile.logicalPath,
     title,
     kind,
     targetFolder,
@@ -475,6 +659,38 @@ function parseNotionHtml(
     body,
     attachments,
   };
+  dom.window.close();
+  return page;
+}
+
+function writePageToVault(
+  outputDir: string,
+  page: NotionPage,
+  writtenFiles: Set<string>
+): void {
+  let fileName = sanitizeFilename(page.title) + '.md';
+  const targetDir = path.join(outputDir, page.targetFolder);
+  let targetPath = path.join(targetDir, fileName);
+
+  if (writtenFiles.has(targetPath.toLowerCase())) {
+    fileName = sanitizeFilename(page.title) + ' (2).md';
+    targetPath = path.join(targetDir, fileName);
+  }
+  writtenFiles.add(targetPath.toLowerCase());
+
+  const frontmatter = buildFrontmatter(page.kind, page.properties);
+  const content = `${frontmatter}\n\n${page.body}\n`;
+  fs.writeFileSync(targetPath, content, 'utf-8');
+
+  for (const attachment of page.attachments) {
+    const attachmentTarget = path.join(outputDir, attachment.targetPath);
+    try {
+      fs.mkdirSync(path.dirname(attachmentTarget), { recursive: true });
+      fs.copyFileSync(attachment.source, attachmentTarget);
+    } catch (err) {
+      console.error(`    [!] Error copying attachment: ${err}`);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -704,29 +920,31 @@ function serializeYamlProperty(key: string, value: unknown): string {
 // Discover and classify Notion export folders
 // ---------------------------------------------------------------------------
 
-interface DatabaseFolder {
-  folderPath: string;
-  folderName: string;
-  kind: string;
-  targetFolder: string;
-}
-
 function discoverDatabases(exportRoot: string): DatabaseFolder[] {
-  // First, find the "Databases & Components" folder if it exists (Notion Ultimate Brain structure)
-  // Do this in Node.js to avoid bash encoding issues with smart quotes
-  const dbComponentsDir = findDatabasesFolder(exportRoot);
-  const searchRoot = dbComponentsDir || exportRoot;
-  console.log(`  Search root: ${searchRoot}`);
+  const exportRootRaw = toRawPath(exportRoot);
+  const dbComponentsDir = findDatabasesFolder(exportRootRaw);
+  const searchRoot = dbComponentsDir || {
+    rawPath: exportRootRaw,
+    logicalPath: '',
+    displayName: path.basename(exportRoot),
+    isDirectory: true,
+  };
+
+  console.log(`  Search root: ${searchRoot.logicalPath || exportRoot}`);
 
   const results: DatabaseFolder[] = [];
-  const entries = fs.readdirSync(searchRoot, { withFileTypes: true });
+  const entries = readdirRaw(searchRoot.rawPath);
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
 
-    const folderName = stripNotionUuid(entry.name).toLowerCase();
+    const folder = makeSourceEntry(
+      searchRoot.rawPath,
+      searchRoot.logicalPath,
+      entry
+    );
+    const folderName = stripNotionUuid(folder.displayName).toLowerCase();
 
-    // Try to match against known database names
     let matched = false;
     for (const [dbName, config] of Object.entries(DATABASE_MAP)) {
       if (
@@ -735,8 +953,7 @@ function discoverDatabases(exportRoot: string): DatabaseFolder[] {
         dbName.includes(folderName)
       ) {
         results.push({
-          folderPath: path.join(searchRoot, entry.name),
-          folderName: entry.name,
+          folder,
           kind: config.kind,
           targetFolder: config.folder,
         });
@@ -746,22 +963,24 @@ function discoverDatabases(exportRoot: string): DatabaseFolder[] {
     }
 
     if (!matched) {
-      // Skip non-database folders (Creator's Companion, Wiki, etc.)
-      // Only treat as notes if it contains HTML files directly
       try {
-        const hasHtml = fs.readdirSync(path.join(searchRoot, entry.name))
-          .some(f => f.endsWith('.html'));
+        const hasHtml = readdirRaw(folder.rawPath).some(
+          (child) => !child.isDirectory() && decodeFilesystemName(child.name).endsWith('.html')
+        );
         if (hasHtml) {
-          console.log(`  [?] Unrecognized folder: "${entry.name}" → will be treated as notes`);
+          console.log(
+            `  [?] Unrecognized folder: "${folder.displayName}" → will be treated as notes`
+          );
           results.push({
-            folderPath: path.join(searchRoot, entry.name),
-            folderName: entry.name,
+            folder,
             kind: 'note',
             targetFolder: '02 Notes',
           });
         }
       } catch {
-        console.log(`  [!] Cannot read folder: "${entry.name}" — skipping (likely encoding issue)`);
+        console.log(
+          `  [!] Cannot read folder: "${folder.displayName}" — skipping (likely encoding issue)`
+        );
       }
     }
   }
@@ -770,39 +989,45 @@ function discoverDatabases(exportRoot: string): DatabaseFolder[] {
 }
 
 /** Recursively find the "Databases & Components" folder, preferring v3 paths */
-function findDatabasesFolder(root: string): string | null {
-  const candidates: string[] = [];
+function findDatabasesFolder(root: RawPath): SourceEntry | null {
+  const candidates: SourceEntry[] = [];
 
-  function walk(dir: string, depth: number): void {
-    if (depth > 5) return; // Don't go too deep
+  function walk(rawDir: RawPath, logicalDir: string, depth: number): void {
+    if (depth > 5) return;
     try {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
+      for (const entry of readdirRaw(rawDir)) {
         if (!entry.isDirectory()) continue;
-        const fullPath = path.join(dir, entry.name);
-        if (entry.name === 'Databases & Components') {
-          candidates.push(fullPath);
+        const node = makeSourceEntry(rawDir, logicalDir, entry);
+        if (node.displayName === 'Databases & Components') {
+          candidates.push(node);
         } else {
-          walk(fullPath, depth + 1);
+          walk(node.rawPath, node.logicalPath, depth + 1);
         }
       }
     } catch {
-      // Skip unreadable dirs
+      // Skip unreadable dirs.
     }
   }
 
-  walk(root, 0);
+  walk(root, '', 0);
 
-  if (candidates.length === 0) return null;
-
-  // Prefer paths containing "v3" (the active version, not archived)
-  const v3 = candidates.find(c => c.toLowerCase().includes('[v3]') || c.toLowerCase().includes('v3'));
-  if (v3) {
-    console.log(`  Found v3 Databases & Components: ${v3}`);
-    return v3;
+  if (candidates.length === 0) {
+    return null;
   }
 
-  console.log(`  Found Databases & Components: ${candidates[0]}`);
+  const v3Candidate = candidates.find((candidate) => {
+    const key = normalizeLookupPath(candidate.logicalPath);
+    return key.includes('[v3]') || key.includes('v3');
+  });
+
+  if (v3Candidate) {
+    console.log(
+      `  Found v3 Databases & Components: ${v3Candidate.logicalPath}`
+    );
+    return v3Candidate;
+  }
+
+  console.log(`  Found Databases & Components: ${candidates[0].logicalPath}`);
   return candidates[0];
 }
 
@@ -810,17 +1035,15 @@ function findDatabasesFolder(root: string): string | null {
 // Collect all HTML files recursively
 // ---------------------------------------------------------------------------
 
-function collectHtmlFiles(dir: string): string[] {
-  const files: string[] = [];
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
+function collectHtmlFiles(dir: SourceEntry): HtmlFile[] {
+  const files: HtmlFile[] = [];
 
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      // Recurse into subdirectories (Notion nests child pages)
-      files.push(...collectHtmlFiles(fullPath));
-    } else if (entry.name.endsWith('.html')) {
-      files.push(fullPath);
+  for (const entry of readdirRaw(dir.rawPath)) {
+    const node = makeSourceEntry(dir.rawPath, dir.logicalPath, entry);
+    if (node.isDirectory) {
+      files.push(...collectHtmlFiles(node));
+    } else if (node.displayName.endsWith('.html')) {
+      files.push(node as HtmlFile);
     }
   }
 
@@ -831,7 +1054,7 @@ function collectHtmlFiles(dir: string): string[] {
 // Main conversion pipeline
 // ---------------------------------------------------------------------------
 
-async function convert(inputDir: string, outputDir: string): Promise<void> {
+export async function convert(inputDir: string, outputDir: string): Promise<void> {
   console.log('=== Notion → Obsidian Converter ===\n');
   console.log(`Input:  ${inputDir}`);
   console.log(`Output: ${outputDir}\n`);
@@ -868,41 +1091,35 @@ async function convert(inputDir: string, outputDir: string): Promise<void> {
   console.log('Phase 1: Discovering database folders...');
   const databases = discoverDatabases(inputDir);
   for (const db of databases) {
-    console.log(`  [✓] ${db.folderName} → kind:${db.kind} → ${db.targetFolder}/`);
+    console.log(
+      `  [✓] ${db.folder.displayName} → kind:${db.kind} → ${db.targetFolder}/`
+    );
   }
   console.log();
 
-  // Phase 2: Build filename mapping (for internal link resolution)
-  console.log('Phase 2: Building filename index...');
-  let totalFiles = 0;
-  for (const db of databases) {
-    const htmlFiles = collectHtmlFiles(db.folderPath);
-    for (const file of htmlFiles) {
-      const basename = path.basename(file, '.html');
-      const cleanName = stripNotionUuid(basename);
-      fileNameMap.set(basename, cleanName);
-      fileNameMap.set(cleanName.toLowerCase(), cleanName);
-      totalFiles++;
-    }
-  }
-  console.log(`  Indexed ${totalFiles} files\n`);
+  // Phase 2: Build a source-path index for attachments and relative lookups.
+  console.log('Phase 2: Building source path index...');
+  const sourceIndex = buildSourceIndex(inputDir);
+  console.log(`  Indexed ${sourceIndex.byLogicalPath.size} source paths\n`);
 
-  // Phase 3: Convert all pages
+  // Phase 3: Convert and write pages incrementally to keep memory bounded.
   console.log('Phase 3: Converting pages...');
-  const pages: NotionPage[] = [];
   const stats = { converted: 0, skipped: 0, errors: 0 };
+  const writtenFiles = new Set<string>();
 
   for (const db of databases) {
-    const htmlFiles = collectHtmlFiles(db.folderPath);
-    console.log(`  Processing ${db.folderName} (${htmlFiles.length} files)...`);
+    const htmlFiles = collectHtmlFiles(db.folder);
+    console.log(
+      `  Processing ${db.folder.displayName} (${htmlFiles.length} files)...`
+    );
 
     for (const htmlFile of htmlFiles) {
       try {
         const page = parseNotionHtml(
           htmlFile,
-          inputDir,
           db.kind,
-          db.targetFolder
+          db.targetFolder,
+          sourceIndex
         );
 
         // Skip empty/untitled pages
@@ -911,50 +1128,18 @@ async function convert(inputDir: string, outputDir: string): Promise<void> {
           continue;
         }
 
-        pages.push(page);
+        writePageToVault(outputDir, page, writtenFiles);
         stats.converted++;
       } catch (err) {
-        console.error(`    [!] Error converting ${htmlFile}: ${err}`);
+        console.error(`    [!] Error converting ${htmlFile.logicalPath}: ${err}`);
         stats.errors++;
       }
     }
   }
   console.log();
 
-  // Phase 4: Write converted files
+  // Phase 4: Report written files
   console.log('Phase 4: Writing vault files...');
-  const writtenFiles = new Set<string>();
-
-  for (const page of pages) {
-    // Build the target filename
-    let fileName = sanitizeFilename(page.title) + '.md';
-    const targetDir = path.join(outputDir, page.targetFolder);
-    let targetPath = path.join(targetDir, fileName);
-
-    // Handle duplicates
-    if (writtenFiles.has(targetPath.toLowerCase())) {
-      fileName = sanitizeFilename(page.title) + ' (2).md';
-      targetPath = path.join(targetDir, fileName);
-    }
-    writtenFiles.add(targetPath.toLowerCase());
-
-    // Build frontmatter + body
-    const frontmatter = buildFrontmatter(page.kind, page.properties);
-    const content = `${frontmatter}\n\n${page.body}\n`;
-
-    fs.writeFileSync(targetPath, content, 'utf-8');
-
-    // Copy attachments
-    for (const att of page.attachments) {
-      const attTarget = path.join(outputDir, att.targetPath);
-      try {
-        fs.mkdirSync(path.dirname(attTarget), { recursive: true });
-        fs.copyFileSync(att.source, attTarget);
-      } catch (err) {
-        console.error(`    [!] Error copying attachment: ${err}`);
-      }
-    }
-  }
   console.log(`  Written ${writtenFiles.size} files\n`);
 
   // Phase 5: Copy vault infrastructure (Bases, Templates, Dashboards, Home)
@@ -1073,21 +1258,30 @@ function escapeRegex(str: string): string {
 // CLI entry point
 // ---------------------------------------------------------------------------
 
-const args = process.argv.slice(2);
+const isCliEntryPoint =
+  process.argv[1] && path.resolve(process.argv[1]) === __filename;
 
-if (args.length < 2) {
-  console.log('Usage: npx tsx scripts/notion-to-obsidian.ts <input-dir> <output-dir>');
-  console.log();
-  console.log('  input-dir   Path to unzipped Notion HTML export');
-  console.log('  output-dir  Path where the Obsidian vault will be created');
-  console.log();
-  console.log('Options:');
-  console.log('  VAULT_INFRA_DIR  Env var pointing to vault infrastructure (Bases, Templates)');
-  process.exit(1);
+if (isCliEntryPoint) {
+  const args = process.argv.slice(2);
+
+  if (args.length < 2) {
+    console.log(
+      'Usage: npx tsx scripts/notion-to-obsidian.ts <input-dir> <output-dir>'
+    );
+    console.log();
+    console.log('  input-dir   Path to unzipped Notion HTML export');
+    console.log('  output-dir  Path where the Obsidian vault will be created');
+    console.log();
+    console.log('Options:');
+    console.log(
+      '  VAULT_INFRA_DIR  Env var pointing to vault infrastructure (Bases, Templates)'
+    );
+    process.exit(1);
+  }
+
+  const [inputDir, outputDir] = args;
+  convert(path.resolve(inputDir), path.resolve(outputDir)).catch((err) => {
+    console.error('Fatal error:', err);
+    process.exit(1);
+  });
 }
-
-const [inputDir, outputDir] = args;
-convert(path.resolve(inputDir), path.resolve(outputDir)).catch((err) => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});

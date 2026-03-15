@@ -31,7 +31,12 @@ echo ""
 ZIP_NAME="${1:-}"
 if [ -z "$ZIP_NAME" ]; then
   echo "Step 1: Looking for Notion export zip in r2:${IMPORT_BUCKET}/..."
-  ZIP_NAME=$(rclone lsf "r2:${IMPORT_BUCKET}/" --include "*.zip" | head -1)
+  ZIP_NAME=$(
+    rclone lsf "r2:${IMPORT_BUCKET}/" \
+      --files-only \
+      --max-depth 1 \
+      --include "*.zip" | head -1
+  )
   if [ -z "$ZIP_NAME" ]; then
     echo "ERROR: No .zip file found in r2:${IMPORT_BUCKET}/"
     echo "Upload your Notion export zip first:"
