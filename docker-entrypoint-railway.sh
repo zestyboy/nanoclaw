@@ -20,6 +20,10 @@ if [ -d "/app/groups" ]; then
     mkdir -p "/data/groups/$group_name"
     [ -f "$group_dir/CLAUDE.md" ] && cp "$group_dir/CLAUDE.md" "/data/groups/$group_name/CLAUDE.md"
     [ -d "$group_dir/templates" ] && cp -r "$group_dir/templates" "/data/groups/$group_name/"
+    # Seed projects.yaml from image only if it doesn't exist on the volume yet
+    # (it's auto-maintained by the agent at runtime, so don't overwrite)
+    [ -f "$group_dir/projects.yaml" ] && [ ! -f "/data/groups/$group_name/projects.yaml" ] && \
+      cp "$group_dir/projects.yaml" "/data/groups/$group_name/projects.yaml"
   done
   chown -R node:node /data/groups
 fi
