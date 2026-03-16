@@ -8,12 +8,13 @@
 
 NanoClaw is a **personal Claude AI assistant** that runs as a single Node.js process. You message it from WhatsApp, Telegram, Discord, or other channels, and it routes your messages to Claude agents running in isolated Linux containers. Each conversation group gets its own sandboxed agent with persistent memory.
 
-**The core purpose has evolved into two things:**
+**The core purpose has evolved into three things:**
 
-1. **Knowledge Repository** — Two Obsidian vaults (public-knowledge for work, second-brain for personal) where your knowledge lives, searchable via [qmd](https://github.com/tobi/qmd)
-2. **Brain Router** — An intelligent triage layer that receives your thoughts via messaging and routes them to the right project, stores them as knowledge, or kicks off agent work
+1. **Personal Assistant (PA)** — A general-purpose front door that handles direct tasks (calendar, email, quick questions) and delegates to the Brain Router for knowledge and project work
+2. **Brain Router** — An intelligent triage layer that routes messages to the right project, stores knowledge, or kicks off agent work
+3. **Knowledge Repository** — Two Obsidian vaults (public-knowledge for work, second-brain for personal) where your knowledge lives, searchable via [qmd](https://github.com/tobi/qmd)
 
-Think of it as: you text a thought to your assistant, and the Brain Router decides whether to file it as knowledge, catalog it in a project, or spin up an agent to do work.
+Think of it as: you text a thought to your PA. If it's a quick task, the PA handles it. If it's about a project or knowledge, the PA delegates to the Brain Router, which decides whether to file it as knowledge, catalog it in a project, or spin up an agent to do work. The PA can also modify the system itself by pushing code changes to GitHub.
 
 ---
 
@@ -87,31 +88,51 @@ Think of it as: you text a thought to your assistant, and the Brain Router decid
 
 ---
 
-## 3. Brain Router
+## 3. Personal Assistant & Brain Router
 
-The Brain Router is a Claude agent running in the **main group** — the user's primary messaging channel (WhatsApp or Telegram). Its behavior is defined entirely in `groups/main/CLAUDE.md`. It receives every message without a trigger word and acts as an intelligent triage layer.
+NanoClaw uses a **two-agent front end** with a three-tier privilege model:
+
+| Tier | Flag | Agent | Folder | Role |
+|------|------|-------|--------|------|
+| **Main** | `isMain=true` | Personal Assistant | `main` | Front door. General tasks, system admin, delegation. No trigger required. |
+| **Elevated** | `trusted=true` | Brain Router | `brain-router` | Knowledge management, project routing, cross-group execution. |
+| **Standard** | neither | Project agents | `project:{slug}` | Per-project work. Own group folder only. |
 
 ### Message Flow
 
 ```
-User (WhatsApp/Telegram)
+User (Discord / WhatsApp / Telegram)
   │
   ▼
-Main Group (isMain=true, no trigger needed)
+Personal Assistant (isMain=true, no trigger needed)
   │
-  ▼
-Brain Router agent reads projects.yaml
+  ├─ Direct tasks → handles immediately (calendar, email, questions)
   │
-  ├─ CATALOG → writes timestamped entry to project's notes.md
-  │            confirms: "Cataloged in **Project Name** → <#channel_id>"
+  ├─ System admin → push_changes to GitHub (triggers Railway redeploy)
   │
-  ├─ EXECUTE → calls execute_in_group(target_group_folder, prompt)
-  │            project agent picks up work in its Discord channel
-  │
-  ├─ PUBLIC_KNOWLEDGE → stores/searches work knowledge vault
-  │
-  └─ SECOND_BRAIN → stores/searches personal knowledge vault
+  └─ Knowledge / project work → execute_in_group("brain-router", prompt)
+       │
+       ▼
+  Brain Router (trusted=true)
+       │
+       ├─ CATALOG → writes timestamped entry to project's notes.md
+       │            confirms: "Cataloged in **Project Name** → <#channel_id>"
+       │
+       ├─ EXECUTE → calls execute_in_group(target_group_folder, prompt)
+       │            project agent picks up work in its Discord channel
+       │
+       ├─ PUBLIC_KNOWLEDGE → stores/searches work knowledge vault
+       │
+       └─ SECOND_BRAIN → stores/searches personal knowledge vault
 ```
+
+### Personal Assistant
+
+The PA runs in the main group (`groups/main/CLAUDE.md`). It handles general requests directly and delegates to the Brain Router for anything involving projects, knowledge, or Second Brain. It also has exclusive access to the `push_changes` IPC operation for self-modification — committing code changes to GitHub which triggers Railway auto-redeploy.
+
+### Brain Router
+
+The Brain Router runs as a **trusted** (elevated) group in `groups/brain-router/`. Its behavior is defined in `groups/brain-router/CLAUDE.md`. It has the same IPC privileges as the main group (cross-group execution, project creation, vault writes, reindexing) but does not have system admin capabilities like `push_changes`.
 
 ### Intent Detection
 
@@ -151,7 +172,7 @@ Projects are never created manually — always through the tool.
 
 ### Projects Registry
 
-`groups/main/projects.yaml` — auto-maintained by the system:
+`groups/brain-router/projects.yaml` — auto-maintained by the system:
 
 ```yaml
 - name: Project Display Name
@@ -177,7 +198,7 @@ Writes a timestamped entry to `/workspace/projects/{slug}/notes.md`. Format adap
 
 Uses `mcp__nanoclaw__execute_in_group`:
 1. Brain Router writes IPC task file
-2. Host verifies source is main group
+2. Host verifies source is an elevated group (main or trusted)
 3. Host inserts synthetic message into target group's chat
 4. Target group's container spawns and processes the work
 5. Project agent responds in its Discord channel
@@ -195,7 +216,7 @@ A searchable Obsidian vault for work-related knowledge. Information is ingested 
 | Local (macOS) | `~/development/nanoclaw-knowledge` | Filesystem (configurable via `NANOCLAW_PUBLIC_KNOWLEDGE_DIR`) |
 | Railway | `/data/public-knowledge` | Synced from Cloudflare R2 |
 
-**Access:** Brain Router = read-write, all other agents = read-only.
+**Access:** Elevated groups (PA, Brain Router) = read-write, all other agents = read-only.
 
 ### Vault Structure
 
@@ -295,7 +316,7 @@ Cloudflare R2: second-brain bucket (backup)
   └── Restores to Railway only if volume is empty
 ```
 
-**Access:** Brain Router = read-write, all other agents = read-only.
+**Access:** Elevated groups (PA, Brain Router) = read-write, all other agents = read-only.
 
 ### Vault Structure
 
@@ -623,8 +644,8 @@ Both vaults are searchable via [qmd](https://github.com/tobi/qmd), which provide
 |------|-------------|-----------|
 | `search_public_knowledge` | Any group | `public-knowledge` |
 | `search_second_brain` | Any group | `second-brain` |
-| `reindex_public_knowledge` | Main only | `public-knowledge` |
-| `reindex_second_brain` | Main only | `second-brain` |
+| `reindex_public_knowledge` | Elevated only | `public-knowledge` |
+| `reindex_second_brain` | Elevated only | `second-brain` |
 
 ### Search Examples
 
@@ -665,7 +686,7 @@ Both vaults are searchable via [qmd](https://github.com/tobi/qmd), which provide
 
 ### Mount Privileges
 
-**Main group (Brain Router):**
+**Main group (Personal Assistant):**
 
 | Host Path | Container Path | Access |
 |-----------|---------------|--------|
@@ -677,7 +698,18 @@ Both vaults are searchable via [qmd](https://github.com/tobi/qmd), which provide
 | Second brain vault | `/workspace/second-brain` | Read-write |
 | Per-group IPC | `/workspace/ipc` | Read-write |
 
-**Non-main groups (project agents):**
+**Trusted groups (Brain Router):**
+
+| Host Path | Container Path | Access |
+|-----------|---------------|--------|
+| Own group folder | `/workspace/group` | Read-write |
+| `groups/` (all groups) | `/workspace/all-groups` | Read-write |
+| Projects directory | `/workspace/projects` | Read-write |
+| Public knowledge vault | `/workspace/public-knowledge` | Read-write |
+| Second brain vault | `/workspace/second-brain` | Read-write |
+| Per-group IPC | `/workspace/ipc` | Read-write |
+
+**Standard groups (project agents):**
 
 | Host Path | Container Path | Access |
 |-----------|---------------|--------|
@@ -697,26 +729,39 @@ Agents communicate with the host via filesystem IPC. The agent writes a JSON tas
 
 | Operation | Who Can Call | What It Does |
 |-----------|-------------|-------------|
-| `send_message` | Any group | Send a message to the group's chat |
-| `schedule_task` | Any group (own), main (any) | Schedule a recurring or one-time task |
-| `execute_in_group` | Main only | Dispatch work to another group's agent |
-| `create_project` | Main only | Create Discord channel + group folder + registration + projects.yaml entry |
+| `send_message` | Any (own JID), elevated (any JID) | Send a message to a chat |
+| `schedule_task` | Any (own group), elevated (any group) | Schedule a recurring or one-time task |
+| `execute_in_group` | Elevated only | Dispatch work to another group's agent |
+| `create_project` | Elevated only | Create Discord channel + group folder + registration + projects.yaml entry |
 | `search_public_knowledge` | Any group | Search public knowledge vault via qmd |
 | `search_second_brain` | Any group | Search second brain vault via qmd |
-| `reindex_public_knowledge` | Main only | Trigger qmd reindex (fire-and-forget) |
-| `reindex_second_brain` | Main only | Trigger qmd reindex (fire-and-forget) |
+| `reindex_public_knowledge` | Elevated only | Trigger qmd reindex (fire-and-forget) |
+| `reindex_second_brain` | Elevated only | Trigger qmd reindex (fire-and-forget) |
+| `push_changes` | Main only | Push code changes to GitHub repo (triggers Railway auto-redeploy) |
+
+**Elevated** = `isMain` or `trusted`. **Main only** = `isMain` exclusively.
 
 ### IPC Flow (execute_in_group example)
 
 1. Brain Router agent calls `mcp__nanoclaw__execute_in_group(target_group_folder, prompt)`
 2. Agent writes IPC file to `/workspace/ipc/tasks/{timestamp}.json`
 3. Host IPC watcher picks it up
-4. Host verifies source is main group
+4. Host verifies source is an elevated group (main or trusted)
 5. Host looks up target group's JID from registered groups
 6. Host inserts synthetic message with `sender: 'router'` into database
 7. Host enqueues target group for processing via GroupQueue
 8. GroupQueue spawns a container for the target group
 9. Target agent processes the message and responds in its Discord channel
+
+### IPC Flow (push_changes — self-modification)
+
+1. PA agent calls `mcp__nanoclaw__push_changes(files, commit_message)`
+2. Agent writes IPC file to `/workspace/ipc/tasks/{timestamp}.json`
+3. Host IPC watcher picks it up, verifies source is main group
+4. **On Railway:** Host uses GitHub API (Git Trees + Commits) to create a commit directly
+5. **On local:** Host uses `git add`, `git commit`, `git push` directly
+6. If `create_pr=true`, creates a branch + PR for human review instead of pushing to main
+7. Railway auto-deploys from the push to main
 
 ---
 
@@ -760,13 +805,17 @@ Agents communicate with the host via filesystem IPC. The agent writes a JSON tas
 - Background loop: backup vaults to R2 every 12 hours
 - After writes: Brain Router calls reindex, rclone syncs changes back to R2
 
-**Environment variables (set in Railway dashboard):**
+**Environment variables (set in Railway dashboard → Variables tab → "+ New Variable"):**
 
 | Variable | Purpose |
 |----------|---------|
-| `ANTHROPIC_API_KEY` | Claude API credentials |
-| `TELEGRAM_BOT_TOKEN` | Telegram channel auth |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude API credentials (OAuth token) |
 | `DISCORD_BOT_TOKEN` | Discord channel auth |
+| `DISCORD_GUILD_ID` | Discord server ID |
+| `DISCORD_PROJECT_CATEGORY_ID` | Discord category for project channels |
+| `TELEGRAM_BOT_TOKEN` | Telegram channel auth |
+| `GITHUB_TOKEN` | GitHub fine-grained PAT for `push_changes` (scopes: Contents, Pull requests, Commit statuses, Metadata) |
+| `GITHUB_REPO` | GitHub repo in `owner/repo` format (e.g., `zestyboy/nanoclaw`) |
 | `R2_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` |
 | `R2_ACCESS_KEY` | R2 API token key ID |
 | `R2_SECRET_KEY` | R2 API token secret |
@@ -776,17 +825,26 @@ Agents communicate with the host via filesystem IPC. The agent writes a JSON tas
 **Railway CLI access:**
 
 ```bash
-# Stream logs
-railway logs -s nanoclaw
+# Link to nanoclaw service (do this first)
+railway service nanoclaw
 
-# Shell into running container
-railway shell -s nanoclaw
+# Stream logs
+railway logs
+
+# SSH into running container (for migrations, debugging)
+railway ssh -s nanoclaw
+
+# Local subshell with Railway env vars (runs commands locally, not on Railway)
+railway shell
 
 # Deploy from local working directory (without pushing to GitHub)
-railway up --service nanoclaw
+railway up
 
-# Redeploy the notion-import service
-railway redeploy --service notion-import --yes
+# Redeploy (restart with same code)
+railway redeploy -s nanoclaw --yes
+
+# Set environment variables
+railway variables set KEY=value
 ```
 
 **Deploy flow:** Push to GitHub → Railway auto-deploys the `nanoclaw` service.
@@ -848,7 +906,8 @@ Channels self-register at startup via a factory pattern (`src/channels/registry.
 
 | Type | Pattern | Example |
 |------|---------|---------|
-| Main group | `main` | `main` |
+| Main group (PA) | `main` | `main` |
+| Brain Router | `brain-router` | `brain-router` |
 | Project groups | `project:{slug}` | `project:saas-mvp` |
 | Discord utility | `discord_{name}` | `discord_one-off` |
 | Telegram | `telegram_{name}` | `telegram_home` |
@@ -861,7 +920,7 @@ Channels self-register at startup via a factory pattern (`src/channels/registry.
 SQLite database at `store/messages.db`. Key tables:
 
 - **messages** — All messages across all channels (id, chat_jid, sender, content, timestamp)
-- **chats** — Registered groups (jid, folder, name, trigger, requiresTrigger, isMain, containerConfig)
+- **chats** — Registered groups (jid, folder, name, trigger, requiresTrigger, isMain, trusted, containerConfig)
 - **scheduled_tasks** — Task scheduler entries (cron/interval/once schedules, group context)
 - **sessions** — Agent session metadata (group, last active, token counts)
 - **task_runs** — History of scheduled task executions
@@ -902,13 +961,15 @@ Inside containers, agents have access to skill prompts at `/app/container/skills
 
 | File | Purpose |
 |------|---------|
-| `groups/main/CLAUDE.md` | Brain Router prompt (all routing, intent detection, vault interaction logic) |
-| `groups/main/projects.yaml` | Project registry (auto-maintained) |
-| `groups/main/templates/` | Project CLAUDE.md templates (general-project, code-project) |
+| `groups/main/CLAUDE.md` | Personal Assistant prompt (general tasks, delegation, system admin) |
+| `groups/brain-router/CLAUDE.md` | Brain Router prompt (routing, intent detection, vault interaction) |
+| `groups/brain-router/projects.yaml` | Project registry (auto-maintained by Brain Router) |
+| `groups/brain-router/templates/` | Project CLAUDE.md templates (general-project, code-project) |
 | `container/skills/public-knowledge/SKILL.md` | Public knowledge vault conventions for agents |
 | `container/skills/second-brain/SKILL.md` | Second Brain vault conventions for agents |
 | `docker-entrypoint-railway.sh` | Railway startup: R2 sync, qmd indexing, backup loop |
 | `scripts/notion-to-obsidian.ts` | Custom Notion HTML → Obsidian converter |
+| `scripts/migrate-pa-split-railway.ts` | Migration script: split main group into PA + Brain Router |
 
 ---
 
