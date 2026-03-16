@@ -4,6 +4,14 @@ set -e
 # Fix volume permissions
 chown -R node:node /data 2>/dev/null || true
 
+# Persist qmd cache (index, models, embeddings) on the Railway volume.
+# Without this, ~/.cache/qmd/ is wiped on every deploy, forcing a full
+# re-download of models (~1GB) and re-embedding of all documents.
+export QMD_CACHE_DIR="/data/qmd-cache"
+export XDG_CACHE_HOME="/data/qmd-cache"
+mkdir -p "$QMD_CACHE_DIR"
+chown -R node:node "$QMD_CACHE_DIR"
+
 # Seed database on first run
 if [ ! -f "/data/store/messages.db" ] && [ -d "/app/seed-data" ]; then
   mkdir -p /data/store
