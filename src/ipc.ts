@@ -46,6 +46,25 @@ export interface IpcDeps {
 }
 
 let ipcWatcherRunning = false;
+const DEFAULT_QMD_QUERY_TIMEOUT_MS = 120_000;
+const DEFAULT_QMD_CANDIDATE_LIMIT = 20;
+
+function parsePositiveInt(
+  value: string | undefined,
+  fallback: number,
+): number {
+  const parsed = Number.parseInt(value ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const QMD_QUERY_TIMEOUT_MS = parsePositiveInt(
+  process.env.QMD_QUERY_TIMEOUT_MS,
+  DEFAULT_QMD_QUERY_TIMEOUT_MS,
+);
+const QMD_QUERY_CANDIDATE_LIMIT = parsePositiveInt(
+  process.env.QMD_QUERY_CANDIDATE_LIMIT,
+  DEFAULT_QMD_CANDIDATE_LIMIT,
+);
 
 export function startIpcWatcher(deps: IpcDeps): void {
   if (ipcWatcherRunning) {
@@ -611,8 +630,14 @@ export async function processTaskIpc(
             'public-knowledge',
             '-n',
             String(limit),
+            '-C',
+            String(QMD_QUERY_CANDIDATE_LIMIT),
           ],
-          { encoding: 'utf-8', timeout: 30000 },
+          {
+            cwd: DATA_DIR,
+            encoding: 'utf-8',
+            timeout: QMD_QUERY_TIMEOUT_MS,
+          },
         );
         const results = JSON.parse(output);
         fs.writeFileSync(
@@ -708,8 +733,14 @@ export async function processTaskIpc(
             'second-brain',
             '-n',
             String(limit),
+            '-C',
+            String(QMD_QUERY_CANDIDATE_LIMIT),
           ],
-          { encoding: 'utf-8', timeout: 30000 },
+          {
+            cwd: DATA_DIR,
+            encoding: 'utf-8',
+            timeout: QMD_QUERY_TIMEOUT_MS,
+          },
         );
         const results = JSON.parse(output);
         fs.writeFileSync(

@@ -7,6 +7,14 @@ chown -R node:node /data 2>/dev/null || true
 # Ensure qmd cache directory exists on the persistent volume.
 # XDG_CACHE_HOME is set in Dockerfile.railway so it survives gosu.
 mkdir -p /data/qmd-cache
+mkdir -p /data/qmd-cache/qmd/models
+mkdir -p /home/node/.cache/qmd
+if [ -e /home/node/.cache/qmd/models ] && [ ! -L /home/node/.cache/qmd/models ]; then
+  rm -rf /home/node/.cache/qmd/models
+fi
+ln -sfn /data/qmd-cache/qmd/models /home/node/.cache/qmd/models
+chown -h node:node /home/node/.cache/qmd/models 2>/dev/null || true
+chown -R node:node /home/node/.cache
 chown -R node:node /data/qmd-cache
 
 # Seed database on first run
