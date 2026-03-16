@@ -249,7 +249,10 @@ export async function processTaskIpc(
         const targetFolder = targetGroupEntry.folder;
 
         // Authorization: non-elevated groups can only schedule for themselves
-        if (!hasElevatedPrivilege(isMain, isTrusted) && targetFolder !== sourceGroup) {
+        if (
+          !hasElevatedPrivilege(isMain, isTrusted) &&
+          targetFolder !== sourceGroup
+        ) {
           logger.warn(
             { sourceGroup, targetFolder },
             'Unauthorized schedule_task attempt blocked',
@@ -324,7 +327,11 @@ export async function processTaskIpc(
     case 'pause_task':
       if (data.taskId) {
         const task = getTaskById(data.taskId);
-        if (task && (hasElevatedPrivilege(isMain, isTrusted) || task.group_folder === sourceGroup)) {
+        if (
+          task &&
+          (hasElevatedPrivilege(isMain, isTrusted) ||
+            task.group_folder === sourceGroup)
+        ) {
           updateTask(data.taskId, { status: 'paused' });
           logger.info(
             { taskId: data.taskId, sourceGroup },
@@ -342,7 +349,11 @@ export async function processTaskIpc(
     case 'resume_task':
       if (data.taskId) {
         const task = getTaskById(data.taskId);
-        if (task && (hasElevatedPrivilege(isMain, isTrusted) || task.group_folder === sourceGroup)) {
+        if (
+          task &&
+          (hasElevatedPrivilege(isMain, isTrusted) ||
+            task.group_folder === sourceGroup)
+        ) {
           updateTask(data.taskId, { status: 'active' });
           logger.info(
             { taskId: data.taskId, sourceGroup },
@@ -360,7 +371,11 @@ export async function processTaskIpc(
     case 'cancel_task':
       if (data.taskId) {
         const task = getTaskById(data.taskId);
-        if (task && (hasElevatedPrivilege(isMain, isTrusted) || task.group_folder === sourceGroup)) {
+        if (
+          task &&
+          (hasElevatedPrivilege(isMain, isTrusted) ||
+            task.group_folder === sourceGroup)
+        ) {
           deleteTask(data.taskId);
           logger.info(
             { taskId: data.taskId, sourceGroup },
@@ -385,7 +400,10 @@ export async function processTaskIpc(
           );
           break;
         }
-        if (!hasElevatedPrivilege(isMain, isTrusted) && task.group_folder !== sourceGroup) {
+        if (
+          !hasElevatedPrivilege(isMain, isTrusted) &&
+          task.group_folder !== sourceGroup
+        ) {
           logger.warn(
             { taskId: data.taskId, sourceGroup },
             'Unauthorized task update attempt',

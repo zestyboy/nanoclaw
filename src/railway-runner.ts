@@ -149,7 +149,11 @@ export async function runRailwayAgent(
   const isMain = input.isMain;
 
   const isTrusted = input.isTrusted === true;
-  const { groupDir, sessionDir, env } = prepareWorkspaceDirs(group, isMain, isTrusted);
+  const { groupDir, sessionDir, env } = prepareWorkspaceDirs(
+    group,
+    isMain,
+    isTrusted,
+  );
 
   const processName = `railway-${group.folder.replace(/[^a-zA-Z0-9-]/g, '-')}-${Date.now()}`;
 

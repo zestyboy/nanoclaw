@@ -338,7 +338,11 @@ export async function runContainerAgent(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(group, input.isMain, input.isTrusted === true);
+  const mounts = buildVolumeMounts(
+    group,
+    input.isMain,
+    input.isTrusted === true,
+  );
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
   const containerArgs = buildContainerArgs(mounts, containerName, input.isMain);
@@ -724,9 +728,10 @@ export function writeTasksSnapshot(
   fs.mkdirSync(groupIpcDir, { recursive: true });
 
   // Elevated groups see all tasks, others only see their own
-  const filteredTasks = (isMain || isTrusted)
-    ? tasks
-    : tasks.filter((t) => t.groupFolder === groupFolder);
+  const filteredTasks =
+    isMain || isTrusted
+      ? tasks
+      : tasks.filter((t) => t.groupFolder === groupFolder);
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
   fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
@@ -755,7 +760,7 @@ export function writeGroupsSnapshot(
   fs.mkdirSync(groupIpcDir, { recursive: true });
 
   // Elevated groups see all groups; others see nothing (they can't activate groups)
-  const visibleGroups = (isMain || isTrusted) ? groups : [];
+  const visibleGroups = isMain || isTrusted ? groups : [];
 
   const groupsFile = path.join(groupIpcDir, 'available_groups.json');
   fs.writeFileSync(
