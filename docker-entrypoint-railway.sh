@@ -103,11 +103,7 @@ if [ -n "$TAILSCALE_AUTHKEY" ]; then
   # Start Silver Bullet on a local-only port (all config via env vars)
   export SB_PORT="${SB_PORT:-3333}"
   export SB_HOSTNAME="127.0.0.1"
-  SB_SPACE="/data/second-brain"
-  echo "Silver Bullet space: $SB_SPACE"
-  echo "  files: $(find "$SB_SPACE" -name '*.md' 2>/dev/null | wc -l) markdown files"
-  echo "  dirs: $(ls -d "$SB_SPACE"/*/ 2>/dev/null | head -5)"
-  gosu node silverbullet "$SB_SPACE" &
+  gosu node silverbullet /data/second-brain &
   echo "Silver Bullet started on $SB_HOSTNAME:$SB_PORT"
 
   # Expose Silver Bullet via Tailscale (HTTPS on the tailnet)
