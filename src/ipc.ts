@@ -998,10 +998,7 @@ async function pushViaGitHubApi(
     if (!prRes.ok)
       throw new Error(`Failed to create PR: ${await prRes.text()}`);
     const prData = (await prRes.json()) as { html_url: string };
-    logger.info(
-      { pr: prData.html_url },
-      'Created PR for push_changes',
-    );
+    logger.info({ pr: prData.html_url }, 'Created PR for push_changes');
   } else {
     // Update the branch ref directly
     const updateRefRes = await fetch(`${apiBase}/git/refs/heads/${branch}`, {
