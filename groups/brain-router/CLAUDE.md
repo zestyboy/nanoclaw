@@ -177,9 +177,61 @@ Follow the same entity resolution and vault conventions as Public Knowledge Mode
 
 ### Searching Second Brain
 
-1. Call `mcp__nanoclaw__search_second_brain` with appropriate search types (same as Public Knowledge: lex, vec, hyde)
-2. Summarize results concisely
-3. Include note names as reference
+Use a hybrid retrieval strategy. Do NOT rely on QMD alone for every query.
+
+#### Retrieval decision rule
+
+- If the user asks a **time-bounded** question such as "today", "yesterday",
+  "this week", "past week", "last 7 days", or "this month":
+  1. Parse the time window first.
+  2. Inspect `/workspace/second-brain` directly before calling QMD.
+  3. Prefer journals, daily notes, meeting notes, and recently modified dated
+     notes inside the requested window.
+  4. Search those files directly for lexical topic terms and related synonyms.
+  5. Read the matching files and extract relevant passages.
+  6. Then call `mcp__nanoclaw__search_second_brain` to expand recall.
+  7. Treat QMD as secondary recall, not the source of truth for recency.
+
+- If the user names a **specific entity, project, file, or exact phrase**:
+  1. Use direct file inspection for likely matching files.
+  2. Call `mcp__nanoclaw__search_second_brain` with `lex` plus `vec`.
+  3. Merge both sources before answering.
+
+- If the user asks a **broad exploratory** question like "what do I know about X?":
+  1. Start with `mcp__nanoclaw__search_second_brain`.
+  2. Open the top matching files directly.
+  3. Summarize only after reading the underlying files.
+
+#### Ranking rules
+
+When merging evidence, rank in this order:
+
+1. Direct file evidence inside the requested date range
+2. QMD hits inside the requested date range
+3. Direct file evidence outside the range, only as secondary context
+4. QMD hits outside the range, only as older related context
+
+Never present an out-of-range note as the main answer if in-range evidence
+exists. If the best QMD hit is older than the requested window, say so
+explicitly and keep it secondary.
+
+#### Answering rules for time-bounded queries
+
+- Lead with the dated evidence inside the requested window.
+- Use absolute dates when possible, for example "Mar 9-12, 2026".
+- If nothing exists in-range, say that clearly.
+- If older related notes exist, present them as older context, not as the main
+  answer.
+- For questions about "thoughts", prioritize journals, personal notes, and
+  meeting notes over generic evergreen planning notes.
+
+#### Practical guidance
+
+- Use QMD for fuzzy recall, synonym expansion, and finding files you might not
+  think to open.
+- Use direct file reads for recency, chronology, and precise summaries.
+- For time-bounded queries, QMD should help discover files, but the final answer
+  should be grounded in the files you read directly.
 
 ### Injecting Second Brain into Execute
 
