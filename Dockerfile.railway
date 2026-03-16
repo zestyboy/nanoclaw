@@ -44,5 +44,6 @@ RUN chmod +x /usr/local/bin/docker-entrypoint-railway.sh
 RUN chown -R node:node /app
 ENV AGENT_RUNNER_PATH=/agent-runner-dist/index.js
 ENV CHROMIUM_PATH=/usr/bin/chromium
+ENV XDG_CACHE_HOME=/data/qmd-cache
 ENTRYPOINT ["docker-entrypoint-railway.sh"]
 CMD ["node", "dist/index.js"]
