@@ -52,11 +52,12 @@ RCLONE
 
     mkdir -p "/data/$vault_name"
     LOCAL_FILES=$(find "/data/$vault_name" -name "*.md" 2>/dev/null | head -1)
-    if [ -z "$LOCAL_FILES" ]; then
-      echo "$vault_name: volume empty — restoring from R2 backup..."
+    if [ -z "$LOCAL_FILES" ] || [ "$FORCE_R2_RESTORE" = "true" ]; then
+      echo "$vault_name: restoring from R2 backup..."
       gosu node rclone sync "r2:${BUCKET}" "/data/$vault_name" --exclude ".remotely-save/**" --exclude "*.zip" || true
+      echo "$vault_name: restored $(find "/data/$vault_name" -name '*.md' | wc -l) markdown files"
     else
-      echo "$vault_name: volume has data — skipping R2 restore."
+      echo "$vault_name: volume has data ($(find "/data/$vault_name" -name '*.md' | wc -l) files) — skipping R2 restore."
     fi
     gosu node qmd collection add "$vault_name" "/data/$vault_name" 2>/dev/null || true
     gosu node sh -c "qmd update -c $vault_name && qmd embed -c $vault_name" 2>/dev/null || true
