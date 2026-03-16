@@ -71,8 +71,8 @@ RCLONE
     else
       echo "$vault_name: volume has data ($(find "/data/$vault_name" -name '*.md' | wc -l) files) — skipping R2 restore."
     fi
-    gosu node sh -c "cd /data && qmd collection remove $vault_name 2>/dev/null; qmd collection add $vault_name /data/$vault_name" 2>/dev/null || true
-    gosu node sh -c "cd /data && qmd update -c $vault_name && qmd embed -c $vault_name" 2>/dev/null || true
+    gosu node sh -c "cd /data && XDG_CACHE_HOME=/data/qmd-cache qmd collection remove $vault_name 2>/dev/null; XDG_CACHE_HOME=/data/qmd-cache qmd collection add $vault_name /data/$vault_name" 2>/dev/null || true
+    gosu node sh -c "cd /data && XDG_CACHE_HOME=/data/qmd-cache qmd update -c $vault_name && XDG_CACHE_HOME=/data/qmd-cache qmd embed -c $vault_name" 2>/dev/null || true
   done
 
   # Background: backup both vaults to R2 and reindex every 12 hours
@@ -85,7 +85,7 @@ RCLONE
       esac
       if [ -z "$BUCKET" ]; then continue; fi
       rclone sync "/data/$vault_name" "r2:${BUCKET}" --exclude ".remotely-save/**" --exclude ".obsidian/**" --exclude ".silverbullet/**" --exclude "*.zip" 2>/dev/null
-      qmd update -c "$vault_name" && qmd embed -c "$vault_name" 2>/dev/null || true
+      XDG_CACHE_HOME=/data/qmd-cache qmd update -c "$vault_name" && XDG_CACHE_HOME=/data/qmd-cache qmd embed -c "$vault_name" 2>/dev/null || true
     done
   done) &
 fi
@@ -126,4 +126,6 @@ fi
 
 # Drop to non-root user and run NanoClaw
 # (claude-code refuses --dangerously-skip-permissions when running as root)
-exec gosu node "$@"
+# XDG_CACHE_HOME ensures qmd (invoked by the host process for IPC searches)
+# uses the persistent cache on the Railway volume.
+exec env XDG_CACHE_HOME=/data/qmd-cache gosu node "$@"
