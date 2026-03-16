@@ -47,6 +47,7 @@ export interface ContainerInput {
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
+  isTrusted?: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
 }
@@ -67,10 +68,12 @@ interface VolumeMount {
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
+  isTrusted: boolean,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
   const groupDir = resolveGroupFolderPath(group.folder);
+  const isElevated = isMain || isTrusted;
 
   if (isMain) {
     // Main gets the project root read-only. Writable paths the agent needs
@@ -88,22 +91,24 @@ function buildVolumeMounts(
     // (a character device). The container entrypoint handles this instead —
     // it starts as root, runs `mount --bind /dev/null /workspace/project/.env`,
     // then drops privileges. See container/Dockerfile entrypoint comments.
+  }
 
-    // Main also gets its group folder as the working directory
-    mounts.push({
-      hostPath: groupDir,
-      containerPath: '/workspace/group',
-      readonly: false,
-    });
+  // Group folder as working directory (all groups)
+  mounts.push({
+    hostPath: groupDir,
+    containerPath: '/workspace/group',
+    readonly: false,
+  });
 
-    // Main gets writable access to all group folders (for cross-group file ops)
+  if (isElevated) {
+    // Elevated groups get writable access to all group folders (for cross-group file ops)
     mounts.push({
       hostPath: path.join(projectRoot, 'groups'),
       containerPath: '/workspace/all-groups',
       readonly: false,
     });
 
-    // Main gets writable access to nanoclaw-projects for cataloging notes
+    // Elevated groups get writable access to nanoclaw-projects for cataloging notes
     if (fs.existsSync(PROJECTS_DIR)) {
       mounts.push({
         hostPath: PROJECTS_DIR,
@@ -112,7 +117,7 @@ function buildVolumeMounts(
       });
     }
 
-    // Main gets writable access to public knowledge vault for ingestion
+    // Elevated groups get writable access to public knowledge vault for ingestion
     if (fs.existsSync(PUBLIC_KNOWLEDGE_DIR)) {
       mounts.push({
         hostPath: PUBLIC_KNOWLEDGE_DIR,
@@ -121,7 +126,7 @@ function buildVolumeMounts(
       });
     }
 
-    // Main gets writable access to Second Brain vault
+    // Elevated groups get writable access to Second Brain vault
     if (SECOND_BRAIN_DIR && fs.existsSync(SECOND_BRAIN_DIR)) {
       mounts.push({
         hostPath: SECOND_BRAIN_DIR,
@@ -130,15 +135,9 @@ function buildVolumeMounts(
       });
     }
   } else {
-    // Other groups only get their own folder
-    mounts.push({
-      hostPath: groupDir,
-      containerPath: '/workspace/group',
-      readonly: false,
-    });
+    // Standard groups get limited access
 
-    // Global memory directory (read-only for non-main)
-    // Only directory mounts are supported, not file mounts
+    // Global memory directory (read-only for standard groups)
     const globalDir = path.join(GROUPS_DIR, 'global');
     if (fs.existsSync(globalDir)) {
       mounts.push({
@@ -148,7 +147,7 @@ function buildVolumeMounts(
       });
     }
 
-    // Non-main groups get read-only access to public knowledge vault
+    // Standard groups get read-only access to public knowledge vault
     if (fs.existsSync(PUBLIC_KNOWLEDGE_DIR)) {
       mounts.push({
         hostPath: PUBLIC_KNOWLEDGE_DIR,
@@ -157,7 +156,7 @@ function buildVolumeMounts(
       });
     }
 
-    // Non-main groups get read-only access to Second Brain vault
+    // Standard groups get read-only access to Second Brain vault
     if (SECOND_BRAIN_DIR && fs.existsSync(SECOND_BRAIN_DIR)) {
       mounts.push({
         hostPath: SECOND_BRAIN_DIR,
@@ -255,6 +254,7 @@ function buildVolumeMounts(
       group.containerConfig.additionalMounts,
       group.name,
       isMain,
+      isTrusted,
     );
     mounts.push(...validatedMounts);
   }
@@ -338,7 +338,7 @@ export async function runContainerAgent(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(group, input.isMain);
+  const mounts = buildVolumeMounts(group, input.isMain, input.isTrusted === true);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
   const containerArgs = buildContainerArgs(mounts, containerName, input.isMain);
@@ -717,13 +717,14 @@ export function writeTasksSnapshot(
     status: string;
     next_run: string | null;
   }>,
+  isTrusted: boolean = false,
 ): void {
   // Write filtered tasks to the group's IPC directory
   const groupIpcDir = resolveGroupIpcPath(groupFolder);
   fs.mkdirSync(groupIpcDir, { recursive: true });
 
-  // Main sees all tasks, others only see their own
-  const filteredTasks = isMain
+  // Elevated groups see all tasks, others only see their own
+  const filteredTasks = (isMain || isTrusted)
     ? tasks
     : tasks.filter((t) => t.groupFolder === groupFolder);
 
@@ -740,20 +741,21 @@ export interface AvailableGroup {
 
 /**
  * Write available groups snapshot for the container to read.
- * Only main group can see all available groups (for activation).
- * Non-main groups only see their own registration status.
+ * Elevated groups (main or trusted) can see all available groups (for activation).
+ * Standard groups see nothing (they can't activate groups).
  */
 export function writeGroupsSnapshot(
   groupFolder: string,
   isMain: boolean,
   groups: AvailableGroup[],
   registeredJids: Set<string>,
+  isTrusted: boolean = false,
 ): void {
   const groupIpcDir = resolveGroupIpcPath(groupFolder);
   fs.mkdirSync(groupIpcDir, { recursive: true });
 
-  // Main sees all groups; others see nothing (they can't activate groups)
-  const visibleGroups = isMain ? groups : [];
+  // Elevated groups see all groups; others see nothing (they can't activate groups)
+  const visibleGroups = (isMain || isTrusted) ? groups : [];
 
   const groupsFile = path.join(groupIpcDir, 'available_groups.json');
   fs.writeFileSync(

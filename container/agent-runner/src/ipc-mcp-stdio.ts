@@ -19,6 +19,12 @@ const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+const isTrusted = process.env.NANOCLAW_IS_TRUSTED === '1';
+
+/** Check if this agent has elevated privileges (main or trusted). */
+function hasElevatedPrivilege(): boolean {
+  return isMain || isTrusted;
+}
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -127,8 +133,8 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       }
     }
 
-    // Non-main groups can only schedule for themselves
-    const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
+    // Non-elevated groups can only schedule for themselves
+    const targetJid = hasElevatedPrivilege() && args.target_group_jid ? args.target_group_jid : chatJid;
 
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -166,7 +172,7 @@ server.tool(
 
       const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
 
-      const tasks = isMain
+      const tasks = hasElevatedPrivilege()
         ? allTasks
         : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
 
@@ -309,9 +315,9 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
   },
   async (args) => {
-    if (!isMain) {
+    if (!hasElevatedPrivilege()) {
       return {
-        content: [{ type: 'text' as const, text: 'Only the main group can register new groups.' }],
+        content: [{ type: 'text' as const, text: 'Only elevated groups can register new groups.' }],
         isError: true,
       };
     }
@@ -341,9 +347,9 @@ server.tool(
     prompt: z.string().describe('The task prompt to execute in the target group'),
   },
   async (args) => {
-    if (!isMain) {
+    if (!hasElevatedPrivilege()) {
       return {
-        content: [{ type: 'text' as const, text: 'Only the main group can execute in other groups.' }],
+        content: [{ type: 'text' as const, text: 'Only elevated groups can execute in other groups.' }],
         isError: true,
       };
     }
@@ -374,9 +380,9 @@ server.tool(
     aliases: z.string().describe('Comma-separated list of aliases/keywords'),
   },
   async (args) => {
-    if (!isMain) {
+    if (!hasElevatedPrivilege()) {
       return {
-        content: [{ type: 'text' as const, text: 'Only the main group can create projects.' }],
+        content: [{ type: 'text' as const, text: 'Only elevated groups can create projects.' }],
         isError: true,
       };
     }
@@ -473,9 +479,9 @@ server.tool(
   'Trigger re-indexing of the public knowledge repository after adding or updating files. Runs in background (fire-and-forget). Main group only.',
   {},
   async () => {
-    if (!isMain) {
+    if (!hasElevatedPrivilege()) {
       return {
-        content: [{ type: 'text' as const, text: 'Only the main group can trigger reindex.' }],
+        content: [{ type: 'text' as const, text: 'Only elevated groups can trigger reindex.' }],
         isError: true,
       };
     }
@@ -566,9 +572,9 @@ server.tool(
   'Trigger re-indexing of the Second Brain vault after adding or updating files. Runs in background (fire-and-forget). Main group only.',
   {},
   async () => {
-    if (!isMain) {
+    if (!hasElevatedPrivilege()) {
       return {
-        content: [{ type: 'text' as const, text: 'Only the main group can trigger reindex.' }],
+        content: [{ type: 'text' as const, text: 'Only elevated groups can trigger reindex.' }],
         isError: true,
       };
     }

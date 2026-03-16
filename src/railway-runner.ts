@@ -31,6 +31,7 @@ const AGENT_RUNNER_PATH =
 function prepareWorkspaceDirs(
   group: RegisteredGroup,
   isMain: boolean,
+  isTrusted: boolean = false,
 ): {
   groupDir: string;
   globalDir: string;
@@ -126,8 +127,8 @@ function prepareWorkspaceDirs(
     env.CLAUDE_CODE_OAUTH_TOKEN = 'placeholder';
   }
 
-  if (isMain) {
-    // Main gets access to all groups and projects dirs
+  if (isMain || isTrusted) {
+    // Elevated groups get access to all groups and projects dirs
     env.NANOCLAW_WORKSPACE_ALL_GROUPS = path.join(dataDir, 'groups');
     const projectsDir = path.join(dataDir, 'projects');
     if (fs.existsSync(projectsDir)) {
@@ -147,7 +148,8 @@ export async function runRailwayAgent(
   const startTime = Date.now();
   const isMain = input.isMain;
 
-  const { groupDir, sessionDir, env } = prepareWorkspaceDirs(group, isMain);
+  const isTrusted = input.isTrusted === true;
+  const { groupDir, sessionDir, env } = prepareWorkspaceDirs(group, isMain, isTrusted);
 
   const processName = `railway-${group.folder.replace(/[^a-zA-Z0-9-]/g, '-')}-${Date.now()}`;
 

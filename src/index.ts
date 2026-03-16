@@ -156,6 +156,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   const isMainGroup = group.isMain === true;
+  const isTrustedGroup = group.trusted === true;
 
   const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
   const missedMessages = getMessagesSince(
@@ -269,6 +270,7 @@ async function runAgent(
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
+  const isTrusted = group.trusted === true;
   const sessionId = sessions[group.folder];
 
   // Update tasks snapshot for container to read (filtered by group)
@@ -285,15 +287,17 @@ async function runAgent(
       status: t.status,
       next_run: t.next_run,
     })),
+    isTrusted,
   );
 
-  // Update available groups snapshot (main group only can see all groups)
+  // Update available groups snapshot (elevated groups can see all groups)
   const availableGroups = getAvailableGroups();
   writeGroupsSnapshot(
     group.folder,
     isMain,
     availableGroups,
     new Set(Object.keys(registeredGroups)),
+    isTrusted,
   );
 
   // Wrap onOutput to track session ID from streamed results
@@ -316,6 +320,7 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
+        isTrusted,
         assistantName: ASSISTANT_NAME,
       },
       (proc, containerName) =>

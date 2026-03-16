@@ -131,6 +131,7 @@ async function runTask(
 
   // Update tasks snapshot for container to read (filtered by group)
   const isMain = group.isMain === true;
+  const isTrusted = group.trusted === true;
   const tasks = getAllTasks();
   writeTasksSnapshot(
     task.group_folder,
@@ -144,6 +145,7 @@ async function runTask(
       status: t.status,
       next_run: t.next_run,
     })),
+    isTrusted,
   );
 
   let result: string | null = null;
@@ -177,6 +179,7 @@ async function runTask(
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,
         isMain,
+        isTrusted,
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
       },

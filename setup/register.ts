@@ -21,6 +21,7 @@ interface RegisterArgs {
   channel: string;
   requiresTrigger: boolean;
   isMain: boolean;
+  trusted: boolean;
   assistantName: string;
 }
 
@@ -33,6 +34,7 @@ function parseArgs(args: string[]): RegisterArgs {
     channel: 'whatsapp', // backward-compat: pre-refactor installs omit --channel
     requiresTrigger: true,
     isMain: false,
+    trusted: false,
     assistantName: 'Andy',
   };
 
@@ -58,6 +60,9 @@ function parseArgs(args: string[]): RegisterArgs {
         break;
       case '--is-main':
         result.isMain = true;
+        break;
+      case '--trusted':
+        result.trusted = true;
         break;
       case '--assistant-name':
         result.assistantName = args[++i] || 'Andy';
@@ -107,6 +112,7 @@ export async function run(args: string[]): Promise<void> {
     added_at: new Date().toISOString(),
     requiresTrigger: parsed.requiresTrigger,
     isMain: parsed.isMain,
+    trusted: parsed.trusted,
   });
 
   logger.info('Wrote registration to SQLite');

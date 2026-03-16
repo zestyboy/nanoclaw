@@ -73,10 +73,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
     const registeredGroups = deps.registeredGroups();
 
-    // Build folder→isMain lookup from registered groups
+    // Build folder→isMain and folder→isTrusted lookups from registered groups
     const folderIsMain = new Map<string, boolean>();
+    const folderIsTrusted = new Map<string, boolean>();
     for (const group of Object.values(registeredGroups)) {
       if (group.isMain) folderIsMain.set(group.folder, true);
+      if (group.trusted) folderIsTrusted.set(group.folder, true);
     }
 
     for (const sourceGroupFs of groupFolders) {
@@ -84,6 +86,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
       // (e.g., "project_finance-tracker" → "project:finance-tracker")
       const sourceGroup = fsNameToFolder(sourceGroupFs);
       const isMain = folderIsMain.get(sourceGroup) === true;
+      const isTrusted = folderIsTrusted.get(sourceGroup) === true;
       const messagesDir = path.join(ipcBaseDir, sourceGroupFs, 'messages');
       const tasksDir = path.join(ipcBaseDir, sourceGroupFs, 'tasks');
 
@@ -102,6 +105,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 const targetGroup = registeredGroups[data.chatJid];
                 if (
                   isMain ||
+                  isTrusted ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
                   await deps.sendMessage(data.chatJid, data.text);
@@ -149,7 +153,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
               // Pass source group identity to processTaskIpc for authorization
-              await processTaskIpc(data, sourceGroup, isMain, deps);
+              await processTaskIpc(data, sourceGroup, isMain, isTrusted, deps);
               fs.unlinkSync(filePath);
             } catch (err) {
               logger.error(
@@ -175,6 +179,11 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
   processIpcFiles();
   logger.info('IPC watcher started (per-group namespaces)');
+}
+
+/** Check if a group has elevated privileges (main or trusted). */
+function hasElevatedPrivilege(isMain: boolean, isTrusted: boolean): boolean {
+  return isMain || isTrusted;
 }
 
 export async function processTaskIpc(
@@ -212,6 +221,7 @@ export async function processTaskIpc(
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
+  isTrusted: boolean, // Verified from directory path
   deps: IpcDeps,
 ): Promise<void> {
   const registeredGroups = deps.registeredGroups();
@@ -238,8 +248,8 @@ export async function processTaskIpc(
 
         const targetFolder = targetGroupEntry.folder;
 
-        // Authorization: non-main groups can only schedule for themselves
-        if (!isMain && targetFolder !== sourceGroup) {
+        // Authorization: non-elevated groups can only schedule for themselves
+        if (!hasElevatedPrivilege(isMain, isTrusted) && targetFolder !== sourceGroup) {
           logger.warn(
             { sourceGroup, targetFolder },
             'Unauthorized schedule_task attempt blocked',
@@ -314,7 +324,7 @@ export async function processTaskIpc(
     case 'pause_task':
       if (data.taskId) {
         const task = getTaskById(data.taskId);
-        if (task && (isMain || task.group_folder === sourceGroup)) {
+        if (task && (hasElevatedPrivilege(isMain, isTrusted) || task.group_folder === sourceGroup)) {
           updateTask(data.taskId, { status: 'paused' });
           logger.info(
             { taskId: data.taskId, sourceGroup },
@@ -332,7 +342,7 @@ export async function processTaskIpc(
     case 'resume_task':
       if (data.taskId) {
         const task = getTaskById(data.taskId);
-        if (task && (isMain || task.group_folder === sourceGroup)) {
+        if (task && (hasElevatedPrivilege(isMain, isTrusted) || task.group_folder === sourceGroup)) {
           updateTask(data.taskId, { status: 'active' });
           logger.info(
             { taskId: data.taskId, sourceGroup },
@@ -350,7 +360,7 @@ export async function processTaskIpc(
     case 'cancel_task':
       if (data.taskId) {
         const task = getTaskById(data.taskId);
-        if (task && (isMain || task.group_folder === sourceGroup)) {
+        if (task && (hasElevatedPrivilege(isMain, isTrusted) || task.group_folder === sourceGroup)) {
           deleteTask(data.taskId);
           logger.info(
             { taskId: data.taskId, sourceGroup },
@@ -375,7 +385,7 @@ export async function processTaskIpc(
           );
           break;
         }
-        if (!isMain && task.group_folder !== sourceGroup) {
+        if (!hasElevatedPrivilege(isMain, isTrusted) && task.group_folder !== sourceGroup) {
           logger.warn(
             { taskId: data.taskId, sourceGroup },
             'Unauthorized task update attempt',
@@ -430,8 +440,8 @@ export async function processTaskIpc(
       break;
 
     case 'refresh_groups':
-      // Only main group can request a refresh
-      if (isMain) {
+      // Only elevated groups can request a refresh
+      if (hasElevatedPrivilege(isMain, isTrusted)) {
         logger.info(
           { sourceGroup },
           'Group metadata refresh requested via IPC',
@@ -454,8 +464,8 @@ export async function processTaskIpc(
       break;
 
     case 'register_group':
-      // Only main group can register new groups
-      if (!isMain) {
+      // Only elevated groups can register new groups
+      if (!hasElevatedPrivilege(isMain, isTrusted)) {
         logger.warn(
           { sourceGroup },
           'Unauthorized register_group attempt blocked',
@@ -488,7 +498,7 @@ export async function processTaskIpc(
       break;
 
     case 'execute_in_group':
-      if (!isMain) {
+      if (!hasElevatedPrivilege(isMain, isTrusted)) {
         logger.warn(
           { sourceGroup },
           'Unauthorized execute_in_group attempt blocked',
@@ -606,8 +616,8 @@ export async function processTaskIpc(
     }
 
     case 'reindex_public_knowledge': {
-      // Main-only: only the Brain Router should trigger reindexing
-      if (!isMain) {
+      // Only elevated groups can trigger reindexing
+      if (!hasElevatedPrivilege(isMain, isTrusted)) {
         logger.warn(
           { sourceGroup },
           'Unauthorized reindex_public_knowledge attempt blocked',
@@ -703,7 +713,7 @@ export async function processTaskIpc(
     }
 
     case 'reindex_second_brain': {
-      if (!isMain) {
+      if (!hasElevatedPrivilege(isMain, isTrusted)) {
         logger.warn(
           { sourceGroup },
           'Unauthorized reindex_second_brain attempt blocked',
@@ -728,7 +738,7 @@ export async function processTaskIpc(
     }
 
     case 'create_project':
-      if (!isMain) {
+      if (!hasElevatedPrivilege(isMain, isTrusted)) {
         logger.warn(
           { sourceGroup },
           'Unauthorized create_project attempt blocked',

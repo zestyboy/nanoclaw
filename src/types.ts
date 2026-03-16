@@ -40,6 +40,7 @@ export interface RegisteredGroup {
   containerConfig?: ContainerConfig;
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
+  trusted?: boolean; // Elevated privileges without being main (e.g., Brain Router)
 }
 
 export interface NewMessage {
