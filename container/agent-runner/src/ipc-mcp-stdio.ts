@@ -592,6 +592,57 @@ server.tool(
   },
 );
 
+server.tool(
+  'push_changes',
+  `Push file changes to the NanoClaw GitHub repository. Main group only.
+
+On Railway, uses the GitHub API to create commits directly. Locally, uses git CLI.
+By default, pushes directly to the main branch (triggering a Railway redeploy).
+Set create_pr=true to create a pull request instead for human review.
+
+Use this for:
+- Fixing configuration issues (CLAUDE.md, projects.yaml)
+- Adding new skills or templates
+- Modifying agent behavior or system architecture
+
+IMPORTANT: Only push changes you are confident about. The commit will trigger a redeploy on Railway.`,
+  {
+    files: z.array(z.object({
+      path: z.string().describe('File path relative to repo root (e.g., "groups/main/CLAUDE.md")'),
+      content: z.string().describe('Full file content to write'),
+    })).describe('Files to create or update'),
+    commit_message: z.string().describe('Git commit message describing the change'),
+    create_pr: z.boolean().optional().describe('If true, create a PR instead of pushing directly (default: false)'),
+    pr_title: z.string().optional().describe('PR title (defaults to commit message)'),
+    pr_body: z.string().optional().describe('PR description'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can push changes.' }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'push_changes',
+      files: args.files,
+      commitMessage: args.commit_message,
+      createPr: args.create_pr || false,
+      prTitle: args.pr_title,
+      prBody: args.pr_body,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    const action = args.create_pr ? 'PR creation' : 'push';
+    return {
+      content: [{ type: 'text' as const, text: `Changes ${action} requested for ${args.files.length} file(s). Watch for confirmation.` }],
+    };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

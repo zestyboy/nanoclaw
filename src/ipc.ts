@@ -218,6 +218,13 @@ export async function processTaskIpc(
     limit?: number;
     resultId?: string;
     collection?: string;
+    // For push_changes
+    files?: Array<{ path: string; content: string }>;
+    commitMessage?: string;
+    branch?: string;
+    createPr?: boolean;
+    prTitle?: string;
+    prBody?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -795,9 +802,250 @@ export async function processTaskIpc(
       }
       break;
 
+    case 'push_changes': {
+      // Main-only: push code changes to GitHub
+      if (!isMain) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized push_changes attempt blocked',
+        );
+        break;
+      }
+      if (data.files && data.files.length > 0 && data.commitMessage) {
+        try {
+          await handlePushChanges(
+            data as {
+              files: Array<{ path: string; content: string }>;
+              commitMessage: string;
+              branch?: string;
+              createPr?: boolean;
+              prTitle?: string;
+              prBody?: string;
+            },
+            sourceGroup,
+            deps,
+          );
+        } catch (err) {
+          logger.error({ err }, 'push_changes failed');
+          const mainJid = Object.entries(deps.registeredGroups()).find(
+            ([, g]) => g.isMain,
+          )?.[0];
+          if (mainJid) {
+            await deps.sendMessage(
+              mainJid,
+              `Failed to push changes: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+      } else {
+        logger.warn({ data }, 'push_changes: missing required fields');
+      }
+      break;
+    }
+
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
   }
+}
+
+async function handlePushChanges(
+  data: {
+    files: Array<{ path: string; content: string }>;
+    commitMessage: string;
+    branch?: string;
+    createPr?: boolean;
+    prTitle?: string;
+    prBody?: string;
+  },
+  sourceGroup: string,
+  deps: IpcDeps,
+): Promise<void> {
+  const githubToken = process.env.GITHUB_TOKEN;
+  const githubRepo = process.env.GITHUB_REPO; // e.g., "owner/repo"
+
+  if (IS_RAILWAY) {
+    // Railway: use GitHub API to create commits (no local git repo)
+    if (!githubToken || !githubRepo) {
+      throw new Error(
+        'GITHUB_TOKEN and GITHUB_REPO env vars required for push_changes on Railway',
+      );
+    }
+    await pushViaGitHubApi(data, githubToken, githubRepo);
+  } else {
+    // Local: use git CLI directly
+    await pushViaGitCli(data);
+  }
+
+  // Notify the main group
+  const mainJid = Object.entries(deps.registeredGroups()).find(
+    ([, g]) => g.isMain,
+  )?.[0];
+  if (mainJid) {
+    const fileList = data.files.map((f) => f.path).join(', ');
+    await deps.sendMessage(
+      mainJid,
+      `Pushed ${data.files.length} file(s) to GitHub: ${fileList}`,
+    );
+  }
+}
+
+async function pushViaGitHubApi(
+  data: {
+    files: Array<{ path: string; content: string }>;
+    commitMessage: string;
+    branch?: string;
+    createPr?: boolean;
+    prTitle?: string;
+    prBody?: string;
+  },
+  token: string,
+  repo: string,
+): Promise<void> {
+  const branch = data.branch || 'main';
+  const apiBase = `https://api.github.com/repos/${repo}`;
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/vnd.github.v3+json',
+    'Content-Type': 'application/json',
+  };
+
+  // Get the current commit SHA for the branch
+  const refRes = await fetch(`${apiBase}/git/ref/heads/${branch}`, { headers });
+  if (!refRes.ok) throw new Error(`Failed to get ref: ${await refRes.text()}`);
+  const refData = (await refRes.json()) as { object: { sha: string } };
+  const baseSha = refData.object.sha;
+
+  // Get the base tree
+  const commitRes = await fetch(`${apiBase}/git/commits/${baseSha}`, {
+    headers,
+  });
+  if (!commitRes.ok)
+    throw new Error(`Failed to get commit: ${await commitRes.text()}`);
+  const commitData = (await commitRes.json()) as { tree: { sha: string } };
+  const baseTreeSha = commitData.tree.sha;
+
+  // Create blobs for each file
+  const treeEntries = [];
+  for (const file of data.files) {
+    const blobRes = await fetch(`${apiBase}/git/blobs`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        content: file.content,
+        encoding: 'utf-8',
+      }),
+    });
+    if (!blobRes.ok)
+      throw new Error(`Failed to create blob: ${await blobRes.text()}`);
+    const blobData = (await blobRes.json()) as { sha: string };
+    treeEntries.push({
+      path: file.path,
+      mode: '100644',
+      type: 'blob',
+      sha: blobData.sha,
+    });
+  }
+
+  // Create tree
+  const treeRes = await fetch(`${apiBase}/git/trees`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      base_tree: baseTreeSha,
+      tree: treeEntries,
+    }),
+  });
+  if (!treeRes.ok)
+    throw new Error(`Failed to create tree: ${await treeRes.text()}`);
+  const treeData = (await treeRes.json()) as { sha: string };
+
+  // Create commit
+  const newCommitRes = await fetch(`${apiBase}/git/commits`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      message: data.commitMessage,
+      tree: treeData.sha,
+      parents: [baseSha],
+    }),
+  });
+  if (!newCommitRes.ok)
+    throw new Error(`Failed to create commit: ${await newCommitRes.text()}`);
+  const newCommitData = (await newCommitRes.json()) as { sha: string };
+
+  if (data.createPr) {
+    // Create a branch and PR instead of pushing directly to main
+    const prBranch = `nanoclaw-auto/${Date.now()}`;
+    await fetch(`${apiBase}/git/refs`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        ref: `refs/heads/${prBranch}`,
+        sha: newCommitData.sha,
+      }),
+    });
+
+    const prRes = await fetch(`${apiBase}/pulls`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        title: data.prTitle || data.commitMessage,
+        body: data.prBody || 'Automated change from NanoClaw agent.',
+        head: prBranch,
+        base: branch,
+      }),
+    });
+    if (!prRes.ok)
+      throw new Error(`Failed to create PR: ${await prRes.text()}`);
+    const prData = (await prRes.json()) as { html_url: string };
+    logger.info(
+      { pr: prData.html_url },
+      'Created PR for push_changes',
+    );
+  } else {
+    // Update the branch ref directly
+    const updateRefRes = await fetch(`${apiBase}/git/refs/heads/${branch}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ sha: newCommitData.sha }),
+    });
+    if (!updateRefRes.ok)
+      throw new Error(`Failed to update ref: ${await updateRefRes.text()}`);
+    logger.info(
+      { sha: newCommitData.sha, branch },
+      'Pushed changes directly to branch',
+    );
+  }
+}
+
+async function pushViaGitCli(data: {
+  files: Array<{ path: string; content: string }>;
+  commitMessage: string;
+  branch?: string;
+}): Promise<void> {
+  const { execFileSync } = await import('child_process');
+  const projectRoot = process.cwd();
+
+  // Write files
+  for (const file of data.files) {
+    const fullPath = path.join(projectRoot, file.path);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, file.content);
+  }
+
+  // Stage, commit, push
+  const filePaths = data.files.map((f) => f.path);
+  execFileSync('git', ['add', ...filePaths], { cwd: projectRoot });
+  execFileSync('git', ['commit', '-m', data.commitMessage], {
+    cwd: projectRoot,
+  });
+  const branch = data.branch || 'main';
+  execFileSync('git', ['push', 'origin', branch], { cwd: projectRoot });
+
+  logger.info(
+    { branch, fileCount: data.files.length },
+    'Pushed changes via git CLI',
+  );
 }
 
 async function handleCreateProject(

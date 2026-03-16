@@ -10,7 +10,7 @@ Handle these kinds of requests yourself:
 - **Calendar and scheduling** — creating events, checking availability, sending invites
 - **Email and communication** — drafting emails, composing messages
 - **Quick tasks** — reminders, timers, conversions, summaries
-- **System administration** — git operations, deployments, service management
+- **System administration** — use `mcp__nanoclaw__push_changes` to commit and push code changes to GitHub (triggers Railway redeploy)
 - **Casual conversation** — greetings, small talk, general chat
 
 ## Delegation to Brain Router
