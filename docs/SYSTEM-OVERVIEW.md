@@ -731,13 +731,65 @@ Agents communicate with the host via filesystem IPC. The agent writes a JSON tas
 
 ### Railway (Cloud)
 
+**Project:** `fulfilling-adventure` (workspace: `My Projects`)
+
+| Service | Purpose | Status |
+|---------|---------|--------|
+| **nanoclaw** | Live NanoClaw orchestrator — handles messaging, Brain Router, agent spawning | Running (always-on) |
+| **notion-import** | One-off service for processing Notion HTML exports into Obsidian vaults | Can be torn down after use |
+
+**How it works:**
 - Single container deployment via `Dockerfile.railway`
 - No Docker-in-Docker — agents run as child processes (`src/railway-runner.ts`)
-- Knowledge vaults synced from **Cloudflare R2** via `rclone`:
-  - On startup: restore from R2 if volume is empty
-  - Background loop: Railway → R2 backup every 12 hours
-  - After writes: Brain Router calls reindex, rclone syncs back to R2
-- Railway persistent volume at `/data` for vault storage between deploys
+- Railway persistent volume mounted at `/data` for all state between deploys
+
+**Volume layout (`/data`):**
+
+| Path | Contents |
+|------|----------|
+| `/data/store/messages.db` | SQLite database |
+| `/data/groups/{name}/` | Per-group agent memory, logs |
+| `/data/sessions/{name}/.claude/` | Per-group Claude Code sessions |
+| `/data/ipc/{name}/` | Per-group IPC files |
+| `/data/projects/` | Brain Router project directories |
+| `/data/public-knowledge/` | Public knowledge vault (synced from R2) |
+| `/data/second-brain/` | Second Brain vault (synced from R2) |
+
+**R2 sync model:**
+- On startup: restore vaults from R2 only if volume is empty (fresh deploy)
+- Background loop: backup vaults to R2 every 12 hours
+- After writes: Brain Router calls reindex, rclone syncs changes back to R2
+
+**Environment variables (set in Railway dashboard):**
+
+| Variable | Purpose |
+|----------|---------|
+| `ANTHROPIC_API_KEY` | Claude API credentials |
+| `TELEGRAM_BOT_TOKEN` | Telegram channel auth |
+| `DISCORD_BOT_TOKEN` | Discord channel auth |
+| `R2_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` |
+| `R2_ACCESS_KEY` | R2 API token key ID |
+| `R2_SECRET_KEY` | R2 API token secret |
+| `R2_PUBLIC_KNOWLEDGE_BUCKET` | Bucket name (e.g., `public-knowledge`) |
+| `R2_SECOND_BRAIN_BUCKET` | Bucket name (e.g., `second-brain`) |
+
+**Railway CLI access:**
+
+```bash
+# Stream logs
+railway logs -s nanoclaw
+
+# Shell into running container
+railway shell -s nanoclaw
+
+# Deploy from local working directory (without pushing to GitHub)
+railway up --service nanoclaw
+
+# Redeploy the notion-import service
+railway redeploy --service notion-import --yes
+```
+
+**Deploy flow:** Push to GitHub → Railway auto-deploys the `nanoclaw` service.
 
 ### Config Constants (`src/config.ts`)
 
@@ -757,11 +809,14 @@ export const SECOND_BRAIN_DIR =
 ### Railway Entrypoint (`docker-entrypoint-railway.sh`)
 
 The entrypoint script:
-1. Configures rclone with R2 credentials from environment variables
-2. Syncs public-knowledge and second-brain vaults from R2
-3. Initializes qmd collections and builds embeddings
-4. Starts a background sync loop (backup to R2 every 12 hours + reindex)
-5. Launches the Node.js host process
+1. Fixes volume permissions
+2. Seeds the database on first run
+3. Syncs group system prompts (CLAUDE.md, templates)
+4. Configures rclone with R2 credentials from environment variables
+5. Restores public-knowledge and second-brain vaults from R2 (if volume empty)
+6. Initializes qmd collections and builds embeddings
+7. Starts a background sync loop (backup to R2 every 12 hours + reindex)
+8. Launches the Node.js host process as non-root user
 
 ### Apple Container Specifics (Current Local Runtime)
 
