@@ -99,14 +99,11 @@ if [ -n "$TAILSCALE_AUTHKEY" ]; then
     --authkey="$TAILSCALE_AUTHKEY" \
     --hostname="$TS_HOSTNAME"
 
-  # Start Silver Bullet on a local-only port
-  SB_PORT="${SB_PORT:-3333}"
-  SB_ARGS="--port $SB_PORT --hostname 127.0.0.1"
-  if [ -n "$SB_USER" ]; then
-    export SB_USER
-  fi
-  gosu node silverbullet $SB_ARGS /data/second-brain &
-  echo "Silver Bullet started on 127.0.0.1:$SB_PORT"
+  # Start Silver Bullet on a local-only port (all config via env vars)
+  export SB_PORT="${SB_PORT:-3333}"
+  export SB_HOSTNAME="127.0.0.1"
+  gosu node silverbullet /data/second-brain &
+  echo "Silver Bullet started on $SB_HOSTNAME:$SB_PORT"
 
   # Expose Silver Bullet via Tailscale (HTTPS on the tailnet)
   tailscale --socket=/var/run/tailscale/tailscaled.sock serve \
