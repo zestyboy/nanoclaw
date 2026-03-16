@@ -1,0 +1,78 @@
+- name: SaaS MVP
+  slug: saas-mvp
+  type: code
+  brief: B2B SaaS product MVP
+  aliases:
+    - saas
+    - startup
+    - product
+    - mvp
+  folder: project:saas-mvp
+  discord_channel_id: "1480643823255425095"
+  created: 2026-03-09
+- name: Marketing Analysis
+  slug: marketing-analysis
+  type: research
+  brief: Competitive analysis of Gleemer and Aidoc marketing tactics
+  aliases:
+    - gleemer
+    - aidoc
+    - marketing
+    - competitive
+  folder: project:marketing-analysis
+  discord_channel_id: "1480643833984188658"
+  created: 2026-03-09
+- name: Home Renovation
+  slug: home-renovation
+  type: planning
+  brief: Kitchen and bathroom renovation planning
+  aliases:
+    - house
+    - kitchen
+    - contractor
+    - renovation
+  folder: project:home-renovation
+  discord_channel_id: "1480649764285583531"
+  created: 2026-03-09
+- name: Home Office
+  slug: home-office
+  type: planning
+  brief: Setting up a new home office space
+  aliases:
+    - office
+    - workspace
+    - desk
+    - setup
+    - home-office
+  folder: project:home-office
+  discord_channel_id: "1480672517801644300"
+  created: 2026-03-09
+- name: Finance Tracker
+  slug: finance-tracker
+  type: code
+  brief: Personal finance tracker that automatically categorizes expenses
+  aliases:
+    - finance
+    - tracker
+    - expenses
+    - budget
+    - money
+    - categorize
+  discord_channel_id: "1480684080210247842"
+  folder: project:finance-tracker
+  created_at: 2026-03-09T21:49:54.610Z
+- name: KOL Development
+  slug: kol-development
+  type: planning
+  brief: Building and executing a KOL program for Harrison.ai — defining
+    parameters and onboarding key opinion leaders
+  aliases:
+    - kol
+    - influencer
+    - harrison
+    - outreach
+    - onboarding
+    - key opinion leader
+  discord_channel_id: "1481340917196783769"
+  folder: project:kol-development
+  created_at: 2026-03-11T17:19:56.763Z

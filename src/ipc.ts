@@ -853,12 +853,13 @@ async function handleCreateProject(
   const projectDir = resolveGroupFolderPath(folder);
   fs.mkdirSync(path.join(projectDir, 'logs'), { recursive: true });
 
-  // Try to load template from groups/main/templates/
+  // Try to load template from the source group's templates/ directory
   const templateName =
     data.projectType === 'code'
       ? 'code-project-claude.md'
       : 'general-project-claude.md';
-  const templatePath = path.join(GROUPS_DIR, 'main', 'templates', templateName);
+  const sourceGroupDir = resolveGroupFolderPath(sourceGroup);
+  const templatePath = path.join(sourceGroupDir, 'templates', templateName);
 
   let claudeContent: string;
   if (fs.existsSync(templatePath)) {
@@ -878,8 +879,8 @@ async function handleCreateProject(
     `# ${data.name} - Notes\n`,
   );
 
-  // Update projects.yaml
-  const projectsYamlPath = path.join(GROUPS_DIR, 'main', 'projects.yaml');
+  // Update projects.yaml in the source group's directory
+  const projectsYamlPath = path.join(sourceGroupDir, 'projects.yaml');
   let projects: any[] = [];
   if (fs.existsSync(projectsYamlPath)) {
     const existing = yaml.parse(fs.readFileSync(projectsYamlPath, 'utf-8'));

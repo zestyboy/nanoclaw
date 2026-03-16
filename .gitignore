@@ -13,10 +13,15 @@ logs/
 groups/*
 !groups/main/
 !groups/global/
+!groups/brain-router/
 groups/main/*
 groups/global/*
+groups/brain-router/*
 !groups/main/CLAUDE.md
 !groups/global/CLAUDE.md
+!groups/brain-router/CLAUDE.md
+!groups/brain-router/templates/
+!groups/brain-router/projects.yaml
 
 # Secrets
 *.keys.json

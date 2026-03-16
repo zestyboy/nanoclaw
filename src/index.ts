@@ -598,18 +598,21 @@ async function main(): Promise<void> {
         'ask',
       ];
       if (passthroughCommands.includes(command)) {
-        // Find the Brain Router group (folder 'main') — prefer it over other
-        // isMain groups since the Brain Router prompt handles intent routing.
-        const mainEntry =
+        // Find the Brain Router group — prefer trusted group (Brain Router)
+        // over isMain (PA) since the Brain Router prompt handles intent routing.
+        const routerEntry =
           Object.entries(registeredGroups).find(
-            ([, g]) => g.folder === 'main',
+            ([, g]) => g.folder === 'brain-router',
+          ) ||
+          Object.entries(registeredGroups).find(
+            ([, g]) => g.trusted === true,
           ) ||
           Object.entries(registeredGroups).find(([, g]) => g.isMain === true);
-        if (!mainEntry) {
-          respond('No main group configured.').catch(() => {});
+        if (!routerEntry) {
+          respond('No Brain Router group configured.').catch(() => {});
           return;
         }
-        const [mainJid, mainGroup] = mainEntry;
+        const [mainJid, mainGroup] = routerEntry;
 
         // Build the prefixed message content
         const content = `/${command} ${args}`.trim();
