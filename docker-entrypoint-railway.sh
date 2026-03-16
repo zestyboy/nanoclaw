@@ -63,8 +63,8 @@ RCLONE
     else
       echo "$vault_name: volume has data ($(find "/data/$vault_name" -name '*.md' | wc -l) files) — skipping R2 restore."
     fi
-    gosu node qmd collection add "$vault_name" "/data/$vault_name" 2>/dev/null || true
-    gosu node sh -c "qmd update -c $vault_name && qmd embed -c $vault_name" 2>/dev/null || true
+    gosu node sh -c "cd /data && qmd collection remove $vault_name 2>/dev/null; qmd collection add $vault_name /data/$vault_name" 2>/dev/null || true
+    gosu node sh -c "cd /data && qmd update -c $vault_name && qmd embed -c $vault_name" 2>/dev/null || true
   done
 
   # Background: backup both vaults to R2 and reindex every 12 hours
