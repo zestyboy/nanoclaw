@@ -942,14 +942,29 @@ From `docs/REQUIREMENTS.md`:
 
 ## 16. Remaining Work
 
-### Multi-Device Sync (Not Yet Implemented)
+### Multi-Device Sync
 
-The Second Brain vault currently lives only on Railway and R2 (backup). There is no device sync. The planned approach:
+**Web access (Silver Bullet) — Implemented:**
 
-- **Web access:** Run [Silver Bullet](https://github.com/silverbulletmd/silverbullet) as a Railway service sharing the `/data` volume, exposed via Tailscale. View and edit vault from any browser without storing files locally.
-- **Phone sync:** Run [Syncthing](https://syncthing.net/) as a Railway service for real-time bidirectional file sync to Obsidian mobile on phone. Explicit peer config (no auto-discovery — Railway doesn't support UDP). Conflict resolution: keep both versions with `.sync-conflict-*` suffix.
+[Silver Bullet](https://github.com/silverbulletmd/silverbullet) runs as a sidecar process inside the NanoClaw container (Railway doesn't support shared volumes between services). It serves the Second Brain vault at `/data/second-brain` and is exposed privately via Tailscale.
 
-Implementation order: Silver Bullet first (immediate value), Syncthing second (when needed).
+- **Binary:** Copied from `ghcr.io/silverbulletmd/silverbullet:latest` at build time
+- **Port:** 3333 (localhost only), proxied to HTTPS via `tailscale serve`
+- **Access:** `https://{TAILSCALE_HOSTNAME}.{tailnet}.ts.net` (Tailnet-only, no public domain)
+- **Auth:** Optional `SB_USER=user:password` env var (Tailscale provides network-level access control)
+- **State:** Tailscale state persisted at `/data/tailscale/` across deploys; SB metadata in `/data/second-brain/.silverbullet/`
+- **Activation:** Set `TAILSCALE_AUTHKEY` env var on Railway to enable; without it, SB and Tailscale are skipped entirely
+
+| Env Var | Required | Default | Purpose |
+|---------|----------|---------|---------|
+| `TAILSCALE_AUTHKEY` | Yes | — | Tailscale auth key (create at admin.tailscale.com/keys, use reusable + ephemeral) |
+| `TAILSCALE_HOSTNAME` | No | `nanoclaw-sb` | Tailscale machine name |
+| `SB_USER` | No | — | Silver Bullet auth (`user:password`) |
+| `SB_PORT` | No | `3333` | Silver Bullet listen port |
+
+**Phone sync (Syncthing) — Not yet implemented:**
+
+- Run [Syncthing](https://syncthing.net/) as a sidecar for real-time bidirectional file sync to Obsidian mobile on phone. Explicit peer config (no auto-discovery — Railway doesn't support UDP). Conflict resolution: keep both versions with `.sync-conflict-*` suffix.
 
 ### Notion Import Cleanup (Low Priority)
 

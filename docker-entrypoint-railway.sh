@@ -52,11 +52,12 @@ RCLONE
 
     mkdir -p "/data/$vault_name"
     LOCAL_FILES=$(find "/data/$vault_name" -name "*.md" 2>/dev/null | head -1)
-    if [ -z "$LOCAL_FILES" ]; then
-      echo "$vault_name: volume empty — restoring from R2 backup..."
+    if [ -z "$LOCAL_FILES" ] || [ "$FORCE_R2_RESTORE" = "true" ]; then
+      echo "$vault_name: restoring from R2 backup..."
       gosu node rclone sync "r2:${BUCKET}" "/data/$vault_name" --exclude ".remotely-save/**" --exclude "*.zip" || true
+      echo "$vault_name: restored $(find "/data/$vault_name" -name '*.md' | wc -l) markdown files"
     else
-      echo "$vault_name: volume has data — skipping R2 restore."
+      echo "$vault_name: volume has data ($(find "/data/$vault_name" -name '*.md' | wc -l) files) — skipping R2 restore."
     fi
     gosu node qmd collection add "$vault_name" "/data/$vault_name" 2>/dev/null || true
     gosu node sh -c "qmd update -c $vault_name && qmd embed -c $vault_name" 2>/dev/null || true
@@ -71,10 +72,44 @@ RCLONE
         second-brain)     BUCKET="$R2_SECOND_BRAIN_BUCKET" ;;
       esac
       if [ -z "$BUCKET" ]; then continue; fi
-      rclone sync "/data/$vault_name" "r2:${BUCKET}" --exclude ".remotely-save/**" --exclude ".obsidian/**" --exclude "*.zip" 2>/dev/null
+      rclone sync "/data/$vault_name" "r2:${BUCKET}" --exclude ".remotely-save/**" --exclude ".obsidian/**" --exclude ".silverbullet/**" --exclude "*.zip" 2>/dev/null
       qmd update -c "$vault_name" && qmd embed -c "$vault_name" 2>/dev/null || true
     done
   done) &
+fi
+
+# Start Tailscale + Silver Bullet (if configured)
+if [ -n "$TAILSCALE_AUTHKEY" ]; then
+  mkdir -p /data/tailscale /var/run/tailscale
+
+  # Start tailscaled in userspace mode (no TUN device on Railway)
+  tailscaled \
+    --tun=userspace-networking \
+    --state=/data/tailscale/tailscaled.state \
+    --socket=/var/run/tailscale/tailscaled.sock &
+
+  # Wait for tailscaled socket to become available
+  for i in $(seq 1 30); do
+    [ -S /var/run/tailscale/tailscaled.sock ] && break
+    sleep 1
+  done
+
+  # Authenticate (reuses existing state across deploys)
+  TS_HOSTNAME="${TAILSCALE_HOSTNAME:-nanoclaw-sb}"
+  tailscale --socket=/var/run/tailscale/tailscaled.sock up \
+    --authkey="$TAILSCALE_AUTHKEY" \
+    --hostname="$TS_HOSTNAME"
+
+  # Start Silver Bullet on a local-only port (all config via env vars)
+  export SB_PORT="${SB_PORT:-3333}"
+  export SB_HOSTNAME="127.0.0.1"
+  gosu node silverbullet /data/second-brain &
+  echo "Silver Bullet started on $SB_HOSTNAME:$SB_PORT"
+
+  # Expose Silver Bullet via Tailscale (HTTPS on the tailnet)
+  tailscale --socket=/var/run/tailscale/tailscaled.sock serve \
+    --bg "http://127.0.0.1:$SB_PORT"
+  echo "Silver Bullet available at https://$TS_HOSTNAME via Tailscale"
 fi
 
 # Drop to non-root user and run NanoClaw
