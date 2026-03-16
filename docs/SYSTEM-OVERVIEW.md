@@ -949,7 +949,7 @@ From `docs/REQUIREMENTS.md`:
 [Silver Bullet](https://github.com/silverbulletmd/silverbullet) runs as a sidecar process inside the NanoClaw container (Railway doesn't support shared volumes between services). It serves the Second Brain vault at `/data/second-brain` and is exposed privately via Tailscale.
 
 - **Binary:** Copied from `ghcr.io/silverbulletmd/silverbullet:latest` at build time
-- **Port:** 3001 (localhost only), proxied to HTTPS via `tailscale serve`
+- **Port:** 3333 (localhost only), proxied to HTTPS via `tailscale serve`
 - **Access:** `https://{TAILSCALE_HOSTNAME}.{tailnet}.ts.net` (Tailnet-only, no public domain)
 - **Auth:** Optional `SB_USER=user:password` env var (Tailscale provides network-level access control)
 - **State:** Tailscale state persisted at `/data/tailscale/` across deploys; SB metadata in `/data/second-brain/.silverbullet/`
@@ -960,7 +960,7 @@ From `docs/REQUIREMENTS.md`:
 | `TAILSCALE_AUTHKEY` | Yes | — | Tailscale auth key (create at admin.tailscale.com/keys, use reusable + ephemeral) |
 | `TAILSCALE_HOSTNAME` | No | `nanoclaw-sb` | Tailscale machine name |
 | `SB_USER` | No | — | Silver Bullet auth (`user:password`) |
-| `SB_PORT` | No | `3001` | Silver Bullet listen port |
+| `SB_PORT` | No | `3333` | Silver Bullet listen port |
 
 **Phone sync (Syncthing) — Not yet implemented:**
 

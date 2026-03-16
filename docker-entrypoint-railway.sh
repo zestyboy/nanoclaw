@@ -100,7 +100,7 @@ if [ -n "$TAILSCALE_AUTHKEY" ]; then
     --hostname="$TS_HOSTNAME"
 
   # Start Silver Bullet on a local-only port
-  SB_PORT="${SB_PORT:-3001}"
+  SB_PORT="${SB_PORT:-3333}"
   SB_ARGS="--port $SB_PORT --hostname 127.0.0.1"
   if [ -n "$SB_USER" ]; then
     export SB_USER
