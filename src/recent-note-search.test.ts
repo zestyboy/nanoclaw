@@ -76,4 +76,32 @@ describe('searchRecentNotes', () => {
     expect(result.results[0].note_date).toBe('2025-03-12');
     expect(result.results[0].matched_terms).toContain('staffing');
   });
+
+  it('ignores undated notes even if they were modified recently', () => {
+    const rootDir = makeTempDir();
+    const notesDir = path.join(rootDir, '02 Notes');
+    fs.mkdirSync(notesDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(notesDir, 'Core Data Transfer Tool.md'),
+      '# Core Data Transfer Tool\n\nHiring and recruiting appear here but this note is undated.',
+    );
+    fs.writeFileSync(
+      path.join(notesDir, 'Journal- @March 12, 2026.md'),
+      '# Staffing\n\nDiscuss with Aengus about hiring.',
+    );
+
+    const result = searchRecentNotes({
+      rootDir,
+      startDate: '2026-03-09',
+      endDate: '2026-03-16',
+      query: 'hiring',
+      terms: ['staffing'],
+      limit: 5,
+    });
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].title).toBe('Staffing');
+    expect(result.results[0].note_date).toBe('2026-03-12');
+  });
 });

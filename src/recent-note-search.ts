@@ -117,12 +117,9 @@ export function deriveNoteDate(
   filePath: string,
   content: string,
   stat: fs.Stats,
-): string {
-  return (
-    parseDateFromFrontmatter(content) ||
-    parseDateFromFilename(filePath) ||
-    toIsoDate(stat.mtime)
-  );
+): string | null {
+  void stat;
+  return parseDateFromFrontmatter(content) || parseDateFromFilename(filePath);
 }
 
 export function tokenizeSearchTerms(
@@ -213,6 +210,7 @@ export function searchRecentNotes(
     const content = fs.readFileSync(filePath, 'utf-8');
     const noteDate = deriveNoteDate(filePath, content, stat);
 
+    if (!noteDate) continue;
     if (noteDate < options.startDate || noteDate > options.endDate) continue;
     filesInRange += 1;
 
