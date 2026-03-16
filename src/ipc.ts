@@ -27,6 +27,7 @@ import {
   resolveGroupFolderPath,
 } from './group-folder.js';
 import { logger } from './logger.js';
+import { searchRecentNotes } from './recent-note-search.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -237,6 +238,10 @@ export async function processTaskIpc(
     limit?: number;
     resultId?: string;
     collection?: string;
+    query?: string;
+    terms?: string[];
+    start_date?: string;
+    end_date?: string;
     // For push_changes
     files?: Array<{ path: string; content: string }>;
     commitMessage?: string;
@@ -764,6 +769,80 @@ export async function processTaskIpc(
           }),
         );
         logger.error({ err, sourceGroup }, 'Second Brain search failed');
+      }
+      break;
+    }
+
+    case 'search_second_brain_recent': {
+      const {
+        query,
+        terms = [],
+        limit = 10,
+        start_date: startDate,
+        end_date: endDate,
+        resultId: recentResultId,
+      } = data as {
+        query: string;
+        terms?: string[];
+        limit?: number;
+        start_date: string;
+        end_date: string;
+        resultId?: string;
+      };
+
+      const recentResultDir = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup.replace(/:/g, '_'),
+        'input',
+      );
+      fs.mkdirSync(recentResultDir, { recursive: true });
+      const recentResultFileName = recentResultId
+        ? `result-${recentResultId}.json`
+        : `result-${Date.now()}.json`;
+
+      try {
+        if (!SECOND_BRAIN_DIR || !fs.existsSync(SECOND_BRAIN_DIR)) {
+          throw new Error('Second Brain directory is not available');
+        }
+        if (!startDate || !endDate) {
+          throw new Error('start_date and end_date are required');
+        }
+
+        const results = searchRecentNotes({
+          rootDir: SECOND_BRAIN_DIR,
+          startDate,
+          endDate,
+          query,
+          terms,
+          limit,
+        });
+
+        fs.writeFileSync(
+          path.join(recentResultDir, recentResultFileName),
+          JSON.stringify({ success: true, results }),
+        );
+        logger.info(
+          {
+            sourceGroup,
+            resultFileName: recentResultFileName,
+            resultCount: results.results.length,
+            filesInRange: results.stats.files_in_range,
+          },
+          'Recent Second Brain search completed',
+        );
+      } catch (err) {
+        fs.writeFileSync(
+          path.join(recentResultDir, recentResultFileName),
+          JSON.stringify({
+            success: false,
+            error: 'Recent Second Brain search failed',
+          }),
+        );
+        logger.error(
+          { err, sourceGroup },
+          'Recent Second Brain search failed',
+        );
       }
       break;
     }

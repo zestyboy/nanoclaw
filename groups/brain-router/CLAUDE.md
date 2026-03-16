@@ -184,13 +184,14 @@ Use a hybrid retrieval strategy. Do NOT rely on QMD alone for every query.
 - If the user asks a **time-bounded** question such as "today", "yesterday",
   "this week", "past week", "last 7 days", or "this month":
   1. Parse the time window first.
-  2. Inspect `/workspace/second-brain` directly before calling QMD.
-  3. Prefer journals, daily notes, meeting notes, and recently modified dated
-     notes inside the requested window.
-  4. Search those files directly for lexical topic terms and related synonyms.
-  5. Read the matching files and extract relevant passages.
-  6. Then call `mcp__nanoclaw__search_second_brain` to expand recall.
-  7. Treat QMD as secondary recall, not the source of truth for recency.
+  2. FIRST call `mcp__nanoclaw__search_second_brain_recent` with:
+     - the exact `start_date` and `end_date`
+     - the user query
+     - lexical topic terms and synonyms
+  3. Read the returned in-range files directly from `/workspace/second-brain`.
+  4. Then call `mcp__nanoclaw__search_second_brain` to expand recall.
+  5. Treat the recent search as the source of truth for recency.
+  6. Treat QMD as secondary recall, not the source of truth for recency.
 
 - If the user names a **specific entity, project, file, or exact phrase**:
   1. Use direct file inspection for likely matching files.
@@ -230,8 +231,10 @@ explicitly and keep it secondary.
 - Use QMD for fuzzy recall, synonym expansion, and finding files you might not
   think to open.
 - Use direct file reads for recency, chronology, and precise summaries.
-- For time-bounded queries, QMD should help discover files, but the final answer
-  should be grounded in the files you read directly.
+- For time-bounded queries, always call `mcp__nanoclaw__search_second_brain_recent`
+  before `mcp__nanoclaw__search_second_brain`.
+- For time-bounded queries, the final answer should be grounded in the files
+  returned by the recent-search tool and then cross-checked with QMD.
 
 ### Injecting Second Brain into Execute
 

@@ -568,6 +568,97 @@ Combine multiple search types for best recall. The first search gets 2x weight.`
 );
 
 server.tool(
+  'search_second_brain_recent',
+  `Search dated notes in the Second Brain within a specific date window. This is the preferred tool for time-bounded questions like "past week", "today", or "this month".
+
+Use this before qmd when the user asks for recent thoughts, journals, meetings, or notes in a defined time range.
+
+The host scans markdown files directly, filters by note date, and returns only in-range matches.`,
+  {
+    query: z.string().describe('Natural-language search query'),
+    start_date: z.string().describe('Inclusive start date in YYYY-MM-DD format'),
+    end_date: z.string().describe('Inclusive end date in YYYY-MM-DD format'),
+    terms: z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Optional lexical terms or synonyms to match directly in recent notes',
+      ),
+    limit: z.number().optional().describe('Max results to return (default: 10)'),
+  },
+  async (args) => {
+    const taskId = `recent-search-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const data = {
+      type: 'search_second_brain_recent',
+      query: args.query,
+      start_date: args.start_date,
+      end_date: args.end_date,
+      terms: args.terms,
+      limit: args.limit || 10,
+      resultId: taskId,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    const resultPath = path.join(IPC_DIR, 'input', `result-${taskId}.json`);
+    const maxWait = 30000;
+    const pollInterval = 200;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      if (fs.existsSync(resultPath)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(resultPath, 'utf-8'));
+          fs.unlinkSync(resultPath);
+          if (result.success) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify(result.results, null, 2),
+                },
+              ],
+            };
+          } else {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: result.error || 'Recent search failed',
+                },
+              ],
+              isError: true,
+            };
+          }
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Error reading recent search results: ${err}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: 'Recent Second Brain search timed out on the host.',
+        },
+      ],
+      isError: true,
+    };
+  },
+);
+
+server.tool(
   'reindex_second_brain',
   'Trigger re-indexing of the Second Brain vault after adding or updating files. Runs in background (fire-and-forget). Main group only.',
   {},
