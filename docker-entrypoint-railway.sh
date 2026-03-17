@@ -4,6 +4,7 @@ set -e
 # Ensure base directories exist on the persistent volume.
 mkdir -p /data/store /data/groups /data/projects /data/sessions /data/ipc /data/state
 mkdir -p /data/state/locks
+mkdir -p /data/syncthing
 
 # Fix volume permissions after any root-owned directories are created.
 chown -R node:node /data 2>/dev/null || true
@@ -92,6 +93,35 @@ if [ -d "/app/groups" ]; then
       cp "$group_dir/projects.yaml" "/data/groups/$group_name/projects.yaml"
   done
   chown -R node:node /data/groups
+fi
+
+# Start Syncthing for project-only sync (if configured)
+if [ "${SYNCTHING_ENABLED:-false}" = "true" ]; then
+  if [ ! -f /data/syncthing/config.xml ] || [ ! -f /data/syncthing/cert.pem ] || [ ! -f /data/syncthing/key.pem ]; then
+    echo "Syncthing: generating initial config..."
+    if ! gosu node syncthing generate --home=/data/syncthing --no-default-folder >/dev/null 2>&1; then
+      echo "Syncthing: failed to generate initial config, continuing without project sync."
+    fi
+  fi
+
+  if [ -f /data/syncthing/config.xml ]; then
+    echo "Syncthing: starting daemon..."
+    gosu node syncthing \
+      --home=/data/syncthing \
+      --gui-address=127.0.0.1:8384 \
+      --no-browser &
+
+    if gosu node node dist/syncthing-config.js; then
+      SYNCTHING_DEVICE_ID="$(gosu node syncthing --home=/data/syncthing --device-id 2>/dev/null || true)"
+      if [ -n "$SYNCTHING_DEVICE_ID" ]; then
+        echo "Syncthing device ID: $SYNCTHING_DEVICE_ID"
+      fi
+    else
+      echo "Syncthing: failed to configure managed settings, continuing with existing daemon state."
+    fi
+  else
+    echo "Syncthing: config.xml is missing, continuing without project sync."
+  fi
 fi
 
 # Start Tailscale + Silver Bullet (if configured)

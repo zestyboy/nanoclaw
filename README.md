@@ -168,6 +168,65 @@ Key files:
 - `src/db.ts` - SQLite operations (messages, groups, sessions, state)
 - `groups/*/CLAUDE.md` - Per-group memory
 
+## Project Sync On Railway
+
+You can mirror NanoClaw project files from Railway to your laptop with Syncthing.
+Phase 1 intentionally syncs only `/data/projects`. It does not sync sessions,
+IPC, the SQLite database, or logs.
+
+### Railway environment variables
+
+Set these on the Railway service:
+
+```bash
+SYNCTHING_ENABLED=true
+SYNCTHING_PEER_DEVICE_ID=<your-laptop-device-id>
+SYNCTHING_FOLDER_ID=nanoclaw-projects
+SYNCTHING_FOLDER_PATH=/data/projects
+SYNCTHING_VERSIONING_DAYS=30
+```
+
+`SYNCTHING_FOLDER_ID`, `SYNCTHING_FOLDER_PATH`, and
+`SYNCTHING_VERSIONING_DAYS` are optional and default to the values above.
+
+### Local setup
+
+1. Install Syncthing on your laptop.
+2. Create or choose the local folder you want NanoClaw projects to live in.
+   The default local path used by NanoClaw is `~/development/nanoclaw-projects`.
+3. In Syncthing on your laptop, create a folder with:
+   - Folder ID: `nanoclaw-projects`
+   - Folder Type: `Send & Receive`
+   - Path: `~/development/nanoclaw-projects`
+   - Ignore Permissions: enabled
+   - File Versioning: `Staggered`
+   - Version retention: `30` days
+4. Start the Railway service with `SYNCTHING_ENABLED=true`.
+5. Read the Railway logs and copy the printed `Syncthing device ID`.
+6. Add the Railway device to your local Syncthing instance and share the
+   `nanoclaw-projects` folder with it.
+7. Set `SYNCTHING_PEER_DEVICE_ID` on Railway to your laptop's device ID and
+   redeploy if you did not set it before the first boot.
+
+### Daily workflow
+
+- NanoClaw edits files under `/data/projects` on Railway.
+- Syncthing syncs those file changes to your laptop automatically.
+- You can open the synced local project in Claude Code and work normally.
+- Local edits sync back to Railway automatically.
+
+If you want to keep that local Claude Code session reachable from your phone or
+browser, start Claude Code locally and use Remote Control there. Remote Control
+is not part of the Railway sync setup itself.
+
+### Limitations
+
+- Simultaneous edits on Railway and your laptop can still create Syncthing
+  conflict files. Resolve those manually.
+- This feature does not sync `/data/sessions`, `/data/ipc`, `/data/store`,
+  `/data/state`, or `groups/*/logs`.
+- Phase 1 supports one laptop peer.
+
 ## FAQ
 
 **Why Docker?**
