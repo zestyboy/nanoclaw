@@ -192,7 +192,9 @@ export function buildDesiredSyncthingConfig(
   const devices = existingDevices.filter(
     (device) => device.deviceID !== env.peerDeviceId,
   );
-  const folders = existingFolders.filter((folder) => folder.id !== env.folderId);
+  const folders = existingFolders.filter(
+    (folder) => folder.id !== env.folderId,
+  );
 
   if (env.peerDeviceId) {
     devices.push(buildPeerDevice(defaultDevice, env.peerDeviceId));
@@ -279,7 +281,9 @@ async function putRestConfig(
     body: JSON.stringify(config),
   });
   if (!response.ok) {
-    throw new Error(`Failed to update Syncthing config: HTTP ${response.status}`);
+    throw new Error(
+      `Failed to update Syncthing config: HTTP ${response.status}`,
+    );
   }
 }
 
