@@ -47,6 +47,12 @@ export const GROUPS_DIR = IS_RAILWAY
 export const DATA_DIR = IS_RAILWAY
   ? RAILWAY_DATA_DIR
   : path.resolve(PROJECT_ROOT, 'data');
+export const STATE_DIR = path.resolve(DATA_DIR, 'state');
+export const STATE_LOCKS_DIR = path.resolve(STATE_DIR, 'locks');
+export const STATE_MANIFEST_PATH = path.resolve(
+  STATE_DIR,
+  'state-manifest.json',
+);
 export const PROJECTS_DIR = IS_RAILWAY
   ? path.resolve(RAILWAY_DATA_DIR, 'projects')
   : process.env.NANOCLAW_PROJECTS_DIR ||
@@ -59,6 +65,7 @@ export const PUBLIC_KNOWLEDGE_DIR =
 export const SECOND_BRAIN_DIR =
   process.env.NANOCLAW_SECOND_BRAIN_DIR ||
   (IS_RAILWAY ? '/data/second-brain' : '');
+export const QMD_CACHE_DIR = path.resolve(DATA_DIR, 'qmd-cache');
 
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
@@ -76,6 +83,15 @@ export const CREDENTIAL_PROXY_PORT = parseInt(
 );
 export const IPC_POLL_INTERVAL = 1000;
 export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
+export const STATE_VERIFY_ENFORCE =
+  (process.env.STATE_VERIFY_ENFORCE || 'false') === 'true';
+export const FORCE_STATE_RESTORE =
+  (process.env.FORCE_STATE_RESTORE || 'false') === 'true';
+export const R2_STATE_BUCKET = process.env.R2_STATE_BUCKET || '';
+export const STATE_SNAPSHOT_INTERVAL_MS = parseInt(
+  process.env.STATE_SNAPSHOT_INTERVAL_MS || '21600000',
+  10,
+);
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,

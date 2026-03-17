@@ -151,9 +151,8 @@ function createSchema(database: Database.Database): void {
 }
 
 export function initDatabase(): void {
-  const dbPath = path.join(STORE_DIR, 'messages.db');
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-
+  const dbPath = getDatabasePath();
+  ensureDatabaseFile();
   db = new Database(dbPath);
   createSchema(db);
 
@@ -165,6 +164,47 @@ export function initDatabase(): void {
 export function _initTestDatabase(): void {
   db = new Database(':memory:');
   createSchema(db);
+}
+
+export function getDatabasePath(): string {
+  return path.join(STORE_DIR, 'messages.db');
+}
+
+export function ensureDatabaseFile(): void {
+  const dbPath = getDatabasePath();
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+
+  if (!fs.existsSync(dbPath)) {
+    const seedDbPath = path.resolve(process.cwd(), 'seed-data', 'messages.db');
+    if (fs.existsSync(seedDbPath)) {
+      fs.copyFileSync(seedDbPath, dbPath);
+    }
+  }
+
+  const tempDb = new Database(dbPath);
+  try {
+    createSchema(tempDb);
+  } finally {
+    tempDb.close();
+  }
+}
+
+export async function backupDatabaseFile(
+  destinationFile: string,
+): Promise<void> {
+  fs.mkdirSync(path.dirname(destinationFile), { recursive: true });
+
+  if (db) {
+    await db.backup(destinationFile);
+    return;
+  }
+
+  const tempDb = new Database(getDatabasePath());
+  try {
+    await tempDb.backup(destinationFile);
+  } finally {
+    tempDb.close();
+  }
 }
 
 /**

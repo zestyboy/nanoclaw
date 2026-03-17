@@ -27,7 +27,9 @@ import {
   resolveGroupFolderPath,
 } from './group-folder.js';
 import { logger } from './logger.js';
+import { scheduleQmdReindex } from './qmd-state.js';
 import { searchRecentNotes } from './recent-note-search.js';
+import { scheduleCanonicalSnapshot } from './state-backup.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -50,10 +52,7 @@ let ipcWatcherRunning = false;
 const DEFAULT_QMD_QUERY_TIMEOUT_MS = 120_000;
 const DEFAULT_QMD_CANDIDATE_LIMIT = 20;
 
-function parsePositiveInt(
-  value: string | undefined,
-  fallback: number,
-): number {
+function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
@@ -679,17 +678,7 @@ export async function processTaskIpc(
         );
         break;
       }
-      // Fire-and-forget: update index, regenerate embeddings, then sync to R2 if on Railway
-      const { spawn: spawnChild } = await import('child_process');
-      const reindexCmd =
-        IS_RAILWAY && process.env.R2_PUBLIC_KNOWLEDGE_BUCKET
-          ? `qmd update -c public-knowledge && qmd embed && rclone sync /data/public-knowledge r2:${process.env.R2_PUBLIC_KNOWLEDGE_BUCKET} --exclude ".remotely-save/**" --exclude ".qmd/**"`
-          : 'qmd update -c public-knowledge && qmd embed';
-      const child = spawnChild('sh', ['-c', reindexCmd], {
-        detached: true,
-        stdio: 'ignore',
-      });
-      child.unref();
+      scheduleQmdReindex('public-knowledge', 'ipc request');
       logger.info(
         { sourceGroup },
         'Public knowledge reindex started in background',
@@ -839,10 +828,7 @@ export async function processTaskIpc(
             error: 'Recent Second Brain search failed',
           }),
         );
-        logger.error(
-          { err, sourceGroup },
-          'Recent Second Brain search failed',
-        );
+        logger.error({ err, sourceGroup }, 'Recent Second Brain search failed');
       }
       break;
     }
@@ -855,16 +841,7 @@ export async function processTaskIpc(
         );
         break;
       }
-      const { spawn: spawnSb } = await import('child_process');
-      const sbReindexCmd =
-        IS_RAILWAY && process.env.R2_SECOND_BRAIN_BUCKET
-          ? `qmd update -c second-brain && qmd embed && rclone sync /data/second-brain r2:${process.env.R2_SECOND_BRAIN_BUCKET} --exclude ".remotely-save/**" --exclude ".qmd/**"`
-          : 'qmd update -c second-brain && qmd embed';
-      const sbChild = spawnSb('sh', ['-c', sbReindexCmd], {
-        detached: true,
-        stdio: 'ignore',
-      });
-      sbChild.unref();
+      scheduleQmdReindex('second-brain', 'ipc request');
       logger.info(
         { sourceGroup },
         'Second Brain reindex started in background',
@@ -1260,6 +1237,7 @@ async function handleCreateProject(
   });
 
   fs.writeFileSync(projectsYamlPath, yaml.stringify(projects));
+  scheduleCanonicalSnapshot('create-project');
 
   // Send confirmation to the main group
   const mainJid = Object.entries(registeredGroups).find(

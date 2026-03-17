@@ -47,6 +47,10 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
+import {
+  scheduleCanonicalSnapshot,
+  startStateSnapshotLoop,
+} from './state-backup.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   isSenderAllowed,
@@ -54,6 +58,7 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
+import { loadStateManifest } from './state-manifest.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -92,6 +97,24 @@ function saveState(): void {
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
 }
 
+function logStateSummary(): void {
+  const manifest = loadStateManifest();
+  const qmdStates = Object.entries(manifest.qmd.collections).map(
+    ([name, state]) => `${name}:${state.status}`,
+  );
+  logger.info(
+    {
+      schemaVersion: manifest.schemaVersion,
+      database: manifest.database.status,
+      publicKnowledge: manifest.vaults['public-knowledge']?.status,
+      secondBrain: manifest.vaults['second-brain']?.status,
+      qmd: qmdStates.join(',') || 'none',
+      lastSnapshot: manifest.snapshots.lastSuccessful?.createdAt || null,
+    },
+    'State summary',
+  );
+}
+
 function registerGroup(jid: string, group: RegisteredGroup): void {
   let groupDir: string;
   try {
@@ -109,6 +132,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
 
   // Create group folder
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
+  scheduleCanonicalSnapshot('register-group');
 
   logger.info(
     { jid, name: group.name, folder: group.folder },
@@ -515,6 +539,8 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+  logStateSummary();
+  startStateSnapshotLoop();
 
   // Start credential proxy (containers route API calls through this)
   const proxyServer = await startCredentialProxy(

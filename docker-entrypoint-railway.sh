@@ -1,7 +1,11 @@
 #!/bin/bash
 set -e
 
-# Fix volume permissions
+# Ensure base directories exist on the persistent volume.
+mkdir -p /data/store /data/groups /data/projects /data/sessions /data/ipc /data/state
+mkdir -p /data/state/locks
+
+# Fix volume permissions after any root-owned directories are created.
 chown -R node:node /data 2>/dev/null || true
 
 # Ensure qmd cache directory exists on the persistent volume.
@@ -16,30 +20,6 @@ ln -sfn /data/qmd-cache/qmd/models /home/node/.cache/qmd/models
 chown -h node:node /home/node/.cache/qmd/models 2>/dev/null || true
 chown -R node:node /home/node/.cache
 chown -R node:node /data/qmd-cache
-
-# Seed database on first run
-if [ ! -f "/data/store/messages.db" ] && [ -d "/app/seed-data" ]; then
-  mkdir -p /data/store
-  cp /app/seed-data/* /data/store/
-  chown -R node:node /data/store
-fi
-
-# Sync group system prompts from image to persistent volume on every deploy.
-# CLAUDE.md and templates/ are code artifacts — always overwrite with latest.
-# Other files (logs, conversations, notes) are agent data — never touched.
-if [ -d "/app/groups" ]; then
-  for group_dir in /app/groups/*/; do
-    group_name=$(basename "$group_dir")
-    mkdir -p "/data/groups/$group_name"
-    [ -f "$group_dir/CLAUDE.md" ] && cp "$group_dir/CLAUDE.md" "/data/groups/$group_name/CLAUDE.md"
-    [ -d "$group_dir/templates" ] && cp -r "$group_dir/templates" "/data/groups/$group_name/"
-    # Seed projects.yaml from image only if it doesn't exist on the volume yet
-    # (it's auto-maintained by the agent at runtime, so don't overwrite)
-    [ -f "$group_dir/projects.yaml" ] && [ ! -f "/data/groups/$group_name/projects.yaml" ] && \
-      cp "$group_dir/projects.yaml" "/data/groups/$group_name/projects.yaml"
-  done
-  chown -R node:node /data/groups
-fi
 
 # Configure rclone for R2 (if credentials provided)
 if [ -n "$R2_ENDPOINT" ]; then
@@ -76,11 +56,9 @@ RCLONE
     else
       echo "$vault_name: volume has data ($(find "/data/$vault_name" -name '*.md' | wc -l) files) — skipping R2 restore."
     fi
-    gosu node sh -c "cd /data && qmd collection remove $vault_name 2>/dev/null; qmd collection add $vault_name /data/$vault_name" 2>/dev/null || true
-    gosu node sh -c "cd /data && qmd update -c $vault_name && qmd embed -c $vault_name" 2>/dev/null || true
   done
 
-  # Background: backup both vaults to R2 and reindex every 12 hours
+  # Background: backup both vaults to R2 every 12 hours.
   (while true; do
     sleep 43200
     for vault_name in public-knowledge second-brain; do
@@ -90,9 +68,30 @@ RCLONE
       esac
       if [ -z "$BUCKET" ]; then continue; fi
       rclone sync "/data/$vault_name" "r2:${BUCKET}" --exclude ".remotely-save/**" --exclude ".obsidian/**" --exclude ".silverbullet/**" --exclude "*.zip" 2>/dev/null
-      qmd update -c "$vault_name" && qmd embed -c "$vault_name" 2>/dev/null || true
     done
   done) &
+fi
+
+# Verify Railway state before starting the host process.
+VERIFY_ARGS="--mode boot"
+if [ "$STATE_VERIFY_ENFORCE" = "true" ]; then
+  VERIFY_ARGS="$VERIFY_ARGS --repair"
+fi
+gosu node sh -lc "node dist/verify-railway-state.js $VERIFY_ARGS"
+
+# Sync group system prompts from image to persistent volume on every deploy.
+# CLAUDE.md and templates/ are code artifacts — always overwrite with latest.
+# Other files (logs, conversations, notes) are agent data — never touched.
+if [ -d "/app/groups" ]; then
+  for group_dir in /app/groups/*/; do
+    group_name=$(basename "$group_dir")
+    mkdir -p "/data/groups/$group_name"
+    [ -f "$group_dir/CLAUDE.md" ] && cp "$group_dir/CLAUDE.md" "/data/groups/$group_name/CLAUDE.md"
+    [ -d "$group_dir/templates" ] && cp -r "$group_dir/templates" "/data/groups/$group_name/"
+    [ -f "$group_dir/projects.yaml" ] && [ ! -f "/data/groups/$group_name/projects.yaml" ] && \
+      cp "$group_dir/projects.yaml" "/data/groups/$group_name/projects.yaml"
+  done
+  chown -R node:node /data/groups
 fi
 
 # Start Tailscale + Silver Bullet (if configured)

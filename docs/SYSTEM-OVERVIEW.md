@@ -797,13 +797,22 @@ Agents communicate with the host via filesystem IPC. The agent writes a JSON tas
 | `/data/sessions/{name}/.claude/` | Per-group Claude Code sessions |
 | `/data/ipc/{name}/` | Per-group IPC files |
 | `/data/projects/` | Brain Router project directories |
+| `/data/state/state-manifest.json` | Boot verification + snapshot metadata |
+| `/data/state/locks/` | Reindex/snapshot lock files |
+| `/data/qmd-cache/` | qmd models and derived cache state |
 | `/data/public-knowledge/` | Public knowledge vault (synced from R2) |
 | `/data/second-brain/` | Second Brain vault (synced from R2) |
 
+**State model:**
+- **Canonical state:** `messages.db`, `groups/`, `projects/`, `state/`
+- **Derived state:** `qmd-cache/` (models, collection metadata, embeddings)
+- **Ephemeral state:** `ipc/`, transient logs, in-flight temp files
+
 **R2 sync model:**
-- On startup: restore vaults from R2 only if volume is empty (fresh deploy)
+- On startup: restore vaults from R2 only if the local vault working copy is empty
+- Optional canonical snapshots: `R2_STATE_BUCKET` stores DB + groups/projects/state bundles
 - Background loop: backup vaults to R2 every 12 hours
-- After writes: Brain Router calls reindex, rclone syncs changes back to R2
+- After writes: host-managed reindex updates qmd state, then syncs the changed vault back to R2
 
 **Environment variables (set in Railway dashboard → Variables tab → "+ New Variable"):**
 
@@ -821,6 +830,9 @@ Agents communicate with the host via filesystem IPC. The agent writes a JSON tas
 | `R2_SECRET_KEY` | R2 API token secret |
 | `R2_PUBLIC_KNOWLEDGE_BUCKET` | Bucket name (e.g., `public-knowledge`) |
 | `R2_SECOND_BRAIN_BUCKET` | Bucket name (e.g., `second-brain`) |
+| `R2_STATE_BUCKET` | Optional bucket for canonical state snapshots |
+| `STATE_VERIFY_ENFORCE` | `false` = report-only boot verification, `true` = repair/fail-closed |
+| `FORCE_STATE_RESTORE` | Force canonical state restore from `R2_STATE_BUCKET` on next boot |
 
 **Railway CLI access:**
 
@@ -833,6 +845,9 @@ railway logs
 
 # SSH into running container (for migrations, debugging)
 railway ssh -s nanoclaw
+
+# Manual state verification inside the running container
+node dist/verify-railway-state.js --mode manual
 
 # Local subshell with Railway env vars (runs commands locally, not on Railway)
 railway shell
@@ -868,13 +883,20 @@ export const SECOND_BRAIN_DIR =
 
 The entrypoint script:
 1. Fixes volume permissions
-2. Seeds the database on first run
-3. Syncs group system prompts (CLAUDE.md, templates)
-4. Configures rclone with R2 credentials from environment variables
-5. Restores public-knowledge and second-brain vaults from R2 (if volume empty)
-6. Initializes qmd collections and builds embeddings
-7. Starts a background sync loop (backup to R2 every 12 hours + reindex)
-8. Launches the Node.js host process as non-root user
+2. Configures rclone with R2 credentials from environment variables
+3. Restores public-knowledge and second-brain vaults from R2 (if vault working copy is empty)
+4. Runs `node dist/verify-railway-state.js --mode boot`
+5. Syncs group system prompts (CLAUDE.md, templates) after verification
+6. Starts a background sync loop for vault backup every 12 hours
+7. Launches the Node.js host process as non-root user
+
+**Boot verification flow:**
+1. Ensure `/data` base directories exist
+2. Optionally restore canonical state from `R2_STATE_BUCKET`
+3. Ensure `messages.db` exists and schema is current
+4. Normalize qmd cache layout and verify qmd collections
+5. Synthesize or update `/data/state/state-manifest.json`
+6. Fail closed only when verification reports a fatal state mismatch
 
 ### Apple Container Specifics (Current Local Runtime)
 

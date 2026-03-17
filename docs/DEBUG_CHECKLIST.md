@@ -34,6 +34,19 @@ grep -E 'Connected to WhatsApp|Connection closed|connection.*close' logs/nanocla
 grep 'groupCount' logs/nanoclaw.log | tail -3
 ```
 
+## Railway State Verification
+
+```bash
+# Run the same verifier used at Railway boot
+node dist/verify-railway-state.js --mode manual
+
+# Inspect the last verified state
+cat /data/state/state-manifest.json
+
+# Check canonical snapshot metadata if enabled
+rclone cat r2:${R2_STATE_BUCKET}/state-snapshots/latest.json
+```
+
 ## Session Transcript Branching
 
 ```bash

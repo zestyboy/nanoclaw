@@ -40,7 +40,10 @@ describe('recent note date parsing', () => {
 
   it('tokenizes query terms and removes stop words', () => {
     expect(
-      tokenizeSearchTerms('What were my thoughts around hiring within the past week?', ['staffing']),
+      tokenizeSearchTerms(
+        'What were my thoughts around hiring within the past week?',
+        ['staffing'],
+      ),
     ).toEqual(['staffing', 'hiring']);
   });
 });
