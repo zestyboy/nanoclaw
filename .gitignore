@@ -30,6 +30,9 @@ groups/brain-router/*
 # Temp files
 .tmp-*
 
+# Runtime database
+nanoclaw.db
+
 # OS
 .DS_Store
 
