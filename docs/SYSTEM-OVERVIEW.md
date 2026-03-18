@@ -800,6 +800,7 @@ Agents communicate with the host via filesystem IPC. The agent writes a JSON tas
 | `/data/state/state-manifest.json` | Boot verification + snapshot metadata |
 | `/data/state/locks/` | Reindex/snapshot lock files |
 | `/data/qmd-cache/` | qmd models and derived cache state |
+| `/data/syncthing/` | Syncthing config, keys, and index DB |
 | `/data/public-knowledge/` | Public knowledge vault (synced from R2) |
 | `/data/second-brain/` | Second Brain vault (synced from R2) |
 
@@ -833,6 +834,8 @@ Agents communicate with the host via filesystem IPC. The agent writes a JSON tas
 | `R2_STATE_BUCKET` | Optional bucket for canonical state snapshots |
 | `STATE_VERIFY_ENFORCE` | `false` = report-only boot verification, `true` = repair/fail-closed |
 | `FORCE_STATE_RESTORE` | Force canonical state restore from `R2_STATE_BUCKET` on next boot |
+| `SYNCTHING_ENABLED` | Enable Syncthing sidecar for project sync (`true`/`false`) |
+| `SYNCTHING_PEER_DEVICE_ID` | Laptop peer device ID for Syncthing pairing |
 
 **Railway CLI access:**
 
@@ -1020,6 +1023,7 @@ Inside containers, agents have access to skill prompts at `/app/container/skills
 | `src/verify-railway-state.ts` | Railway boot/manual state verifier |
 | `src/qmd-state.ts` | qmd derived-state tracking, compatibility checks, lock-based reindex coordination |
 | `src/state-backup.ts` | Canonical state snapshot plumbing (DB, groups, projects, state) |
+| `src/syncthing-config.ts` | Syncthing REST API auto-configuration for project sync |
 | `docker-entrypoint-railway.sh` | Railway startup: R2 sync, boot verification, backup loop |
 | `Two-Project Railway Plan for NanoClaw.md` | Prod/dev Railway project separation plan |
 | `scripts/notion-to-obsidian.ts` | Custom Notion HTML → Obsidian converter |
@@ -1077,9 +1081,28 @@ From `docs/REQUIREMENTS.md`:
 | `SB_USER` | No | — | Silver Bullet auth (`user:password`) |
 | `SB_PORT` | No | `3333` | Silver Bullet listen port |
 
-**Phone sync (Syncthing) — Not yet implemented:**
+**Project sync (Syncthing) — Implemented:**
 
-- Run [Syncthing](https://syncthing.net/) as a sidecar for real-time bidirectional file sync to Obsidian mobile on phone. Explicit peer config (no auto-discovery — Railway doesn't support UDP). Conflict resolution: keep both versions with `.sync-conflict-*` suffix.
+[Syncthing](https://syncthing.net/) runs as a sidecar process inside the Railway container, providing real-time bidirectional sync of `/data/projects` to a laptop peer.
+
+- **Binary:** Installed via apt (`syncthing` package) at build time
+- **Port:** 8384 (localhost only, GUI/REST API)
+- **Sync target:** `/data/projects` (Brain Router project directories)
+- **Config:** Auto-generated on first boot if missing; programmatically configured via REST API (`src/syncthing-config.ts`)
+- **Peer setup:** Set `SYNCTHING_PEER_DEVICE_ID` to the laptop's device ID; without it, Syncthing starts but creates no shared folder
+- **Versioning:** Staggered versioning with configurable retention (default 30 days)
+- **State:** Syncthing home at `/data/syncthing/` (config, keys, index DB) persisted across deploys
+- **Activation:** Set `SYNCTHING_ENABLED=true` on Railway to enable; without it, Syncthing is skipped entirely
+
+| Env Var | Required | Default | Purpose |
+|---------|----------|---------|---------|
+| `SYNCTHING_ENABLED` | Yes | `false` | Enable Syncthing sidecar |
+| `SYNCTHING_PEER_DEVICE_ID` | No | — | Laptop peer device ID (from `syncthing --device-id`) |
+| `SYNCTHING_FOLDER_ID` | No | `nanoclaw-projects` | Shared folder ID |
+| `SYNCTHING_FOLDER_PATH` | No | `/data/projects` | Path to sync |
+| `SYNCTHING_HOME_DIR` | No | `/data/syncthing` | Syncthing config/state directory |
+| `SYNCTHING_VERSIONING_DAYS` | No | `30` | Staggered versioning retention |
+| `SYNCTHING_GUI_ADDRESS` | No | `127.0.0.1:8384` | GUI/API listen address |
 
 ### Notion Import Cleanup (Low Priority)
 
