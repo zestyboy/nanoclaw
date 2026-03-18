@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "notion": {
+      "source": "steipete/clawdis",
+      "sourceType": "github",
+      "computedHash": "ad9238421952899e618c4fbe3e786029d41655e6f69fbe0c19e636ba8905a4bc"
+    },
+    "wrangler": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "computedHash": "cd0ac8f97a2f54d19166acfd380fca8236db5e9f37d3b2066f713967e2673d36"
+    }
+  }
+}
