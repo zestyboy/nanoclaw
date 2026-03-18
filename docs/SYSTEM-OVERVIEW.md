@@ -1087,12 +1087,16 @@ From `docs/REQUIREMENTS.md`:
 
 - **Binary:** Installed via apt (`syncthing` package) at build time
 - **Port:** 8384 (localhost only, GUI/REST API)
-- **Sync target:** `/data/projects` (Brain Router project directories)
+- **Sync target:** `/data/projects` on Railway ↔ `~/development/nanoclaw-projects` on laptop
+- **Scope:** Project files only — sessions, IPC, store, state, and runtime internals are explicitly excluded
+- **Transport:** Native Syncthing discovery/relay — does not depend on Tailscale (though Tailscale is present in the container for SilverBullet)
 - **Config:** Auto-generated on first boot if missing; programmatically configured via REST API (`src/syncthing-config.ts`)
 - **Peer setup:** Set `SYNCTHING_PEER_DEVICE_ID` to the laptop's device ID; without it, Syncthing starts but creates no shared folder
 - **Versioning:** Staggered versioning with configurable retention (default 30 days)
+- **Ignore:** `.stignore` on both peers excludes `.DS_Store` — Syncthing ignore config is local to each peer, so both sides must have it
 - **State:** Syncthing home at `/data/syncthing/` (config, keys, index DB) persisted across deploys
 - **Activation:** Set `SYNCTHING_ENABLED=true` on Railway to enable; without it, Syncthing is skipped entirely
+- **Boot behavior:** Soft-fail — if Syncthing setup fails, NanoClaw continues booting normally
 
 | Env Var | Required | Default | Purpose |
 |---------|----------|---------|---------|
