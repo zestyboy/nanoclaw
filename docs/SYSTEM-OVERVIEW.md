@@ -864,6 +864,33 @@ railway variables set KEY=value
 
 **Deploy flow:** Push to GitHub → Railway auto-deploys the `nanoclaw` service.
 
+### Two-Project Architecture (Planned)
+
+NanoClaw is stateful and operationally sensitive (persistent `/data` volume, live bot tokens, scheduled tasks, Syncthing peer state). To prevent development work from accidentally affecting production, the target architecture uses two separate Railway projects:
+
+| Project | Purpose | Deploy Method |
+|---------|---------|---------------|
+| `nanoclaw-prod` | Production only | Auto-deploy from GitHub `main` |
+| `nanoclaw-dev` | Development/iteration | `railway up` from local machine |
+
+**Key separation rules:**
+- Separate volumes, secrets, bot tokens, and Syncthing identities per project
+- Never reuse production messaging bot tokens in the dev project
+- Production changes arrive only through merge to `main` — no local `railway up` except emergencies
+- Dev project should not auto-deploy from `main`
+
+**Recommended CLI pattern** — always pass explicit project/service to avoid targeting mistakes:
+
+```bash
+railway status --project nanoclaw-dev --service nanoclaw
+railway up --project nanoclaw-dev --service nanoclaw --detach -m "dev deploy"
+railway logs --project nanoclaw-prod --service nanoclaw
+```
+
+**Syncthing:** Production keeps current Syncthing setup. Dev starts without Syncthing (Option A); add a separate peer later only if needed.
+
+See `Two-Project Railway Plan for NanoClaw.md` in the repo root for the full planning document including secrets inventory, seed strategy, bot identity separation, and validation checklists.
+
 ### Config Constants (`src/config.ts`)
 
 ```typescript
@@ -989,7 +1016,12 @@ Inside containers, agents have access to skill prompts at `/app/container/skills
 | `groups/brain-router/templates/` | Project CLAUDE.md templates (general-project, code-project) |
 | `container/skills/public-knowledge/SKILL.md` | Public knowledge vault conventions for agents |
 | `container/skills/second-brain/SKILL.md` | Second Brain vault conventions for agents |
-| `docker-entrypoint-railway.sh` | Railway startup: R2 sync, qmd indexing, backup loop |
+| `src/state-manifest.ts` | Persistent state manifest (`/data/state/state-manifest.json`) |
+| `src/verify-railway-state.ts` | Railway boot/manual state verifier |
+| `src/qmd-state.ts` | qmd derived-state tracking, compatibility checks, lock-based reindex coordination |
+| `src/state-backup.ts` | Canonical state snapshot plumbing (DB, groups, projects, state) |
+| `docker-entrypoint-railway.sh` | Railway startup: R2 sync, boot verification, backup loop |
+| `Two-Project Railway Plan for NanoClaw.md` | Prod/dev Railway project separation plan |
 | `scripts/notion-to-obsidian.ts` | Custom Notion HTML → Obsidian converter |
 | `scripts/migrate-pa-split-railway.ts` | Migration script: split main group into PA + Brain Router |
 
