@@ -887,14 +887,38 @@ RAILWAY_DEV_ENVIRONMENT=dev
 
 **Feature workflow:**
 
-1. Create a local feature branch.
-2. Deploy it to `dev` with `npm run railway:dev:deploy`.
-3. Validate behavior in the dev Railway environment.
-4. Open and merge a PR to `main`.
-5. `production` auto-deploys from GitHub `main`.
+Code moves from `dev` to `production` through Git, not through Railway. You do not "promote" a Railway deployment — you validate a branch in `dev`, merge to `main`, and `production` auto-deploys.
 
-Code promotion happens through Git merge, not by copying dev Railway state into
-prod.
+```
+feature branch → npm run railway:dev:deploy → test in dev Discord → PR → merge to main → production auto-deploys
+```
+
+**Discord dev channels:** The `dev` environment uses dedicated channels under the `NanoClaw Dev Projects` Discord category:
+
+- `#personal-assistant-dev` — test general assistant behavior
+- `#brain-router-dev` — test routing, project creation, knowledge flows
+
+Always test in these channels, not in production channels. Project channels created by the dev bot appear under the dev category.
+
+**Step-by-step:**
+
+1. **Branch from `main`:** `git checkout main && git pull --ff-only && git checkout -b feat/my-feature`
+2. **Build locally:** `npm run build && npm test` — Railway `dev` is not a substitute for local sanity checks
+3. **Deploy to dev:** `npm run railway:dev:deploy` — deploys the current working tree to the `dev` environment
+4. **Check health:** `npm run railway:dev:status && npm run railway:dev:logs` — confirm service is up, bot connected, no missing env vars
+5. **Test in dev Discord:** Use the dev channels above. Run `/clear` first to reset session context after meaningful deploys
+6. **Iterate:** Fix locally → redeploy → retest. The `dev` environment is designed for repeated redeploys
+7. **Open PR to `main`:** Push branch, open PR. Feature is validated remotely but not yet in production
+8. **Merge PR:** This is the production promotion step
+9. **Verify production:** `npm run railway:prod:status && npm run railway:prod:logs` — confirm the auto-deploy succeeded
+10. **Confirm live behavior:** Verify in production Discord channels. `dev` is a strong approximation but not a perfect substitute for prod
+
+**Anti-patterns:**
+
+- **Do not deploy directly to `production`** — there is intentionally no `railway:prod:deploy` wrapper. Production receives code only via merge to `main`
+- **Do not test in prod Discord channels first** — use the dev channels; that is the purpose of the dev environment
+- **Do not "promote" dev deployments** — validate code in `dev`, then merge it. Railway state is never copied between environments
+- **Do not bypass PR flow from `dev`** — `PUSH_CHANGES_DIRECT_MODE=pr-only` blocks direct pushes to `main` from the dev environment
 
 **Seed dev from prod once:**
 
