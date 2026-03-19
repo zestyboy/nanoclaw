@@ -6,7 +6,7 @@
 
 ## 1. What NanoClaw Is
 
-NanoClaw is a **personal Claude AI assistant** that runs as a single Node.js process. You message it from WhatsApp, Telegram, Discord, or other channels, and it routes your messages to Claude agents running in isolated Linux containers. Each conversation group gets its own sandboxed agent with persistent memory.
+NanoClaw is a **personal Claude AI assistant** that runs as a single Node.js process. You message it from Discord or other channels, and it routes your messages to Claude agents running in isolated Linux containers. Each conversation group gets its own sandboxed agent with persistent memory.
 
 **The core purpose has evolved into three things:**
 
@@ -157,8 +157,8 @@ Slash prefixes (`/catalog`, `/execute`, `/knowledge`, `/second-brain`, `/ask`) o
 
 **Confidence handling:**
 - **Clear match:** Route immediately, confirm with clickable channel link
-- **Ambiguous (2-3 matches), no `?` prefix:** Use recent context as tiebreaker; if still ambiguous, ask
-- **`?` prefix (force disambiguation):** Always list all matching projects and ask the user to pick
+- **Ambiguous (2-3 matches):** Use recent context as tiebreaker; if still ambiguous, ask
+- **/ask (force disambiguation):** Always list all matching projects and ask the user to pick
 - **No match:** Propose new project; if confirmed, use `create_project` MCP tool
 
 ### Project Creation
@@ -169,7 +169,7 @@ The `create_project` MCP tool handles everything atomically:
 3. Creates the group folder with CLAUDE.md (from templates) and notes.md
 4. Adds the entry to projects.yaml
 
-Projects are never created manually — always through the tool.
+Projects are preferrably not created manually — generally through the tool.
 
 ### Projects Registry
 
@@ -178,8 +178,8 @@ Projects are never created manually — always through the tool.
 ```yaml
 - name: Project Display Name
   slug: project-slug
-  type: code          # code | planning | research | general
-  brief: One-line description
+  type: general          # code | planning | research | general
+  brief: One-line description	# auto-generate when possible based on context
   aliases:
     - keyword1
     - keyword2
@@ -970,7 +970,56 @@ After upstream merges, always verify these haven't been reverted.
 
 ---
 
-## 10. Channel System
+## 10. Multi-Device Sync
+
+### Web Access (Silver Bullet)
+
+[Silver Bullet](https://github.com/silverbulletmd/silverbullet) runs as a sidecar process inside the NanoClaw container (Railway doesn't support shared volumes between services). It serves the Second Brain vault at `/data/second-brain` and is exposed privately via Tailscale.
+
+- **Binary:** Copied from `ghcr.io/silverbulletmd/silverbullet:latest` at build time
+- **Port:** 3333 (localhost only), proxied to HTTPS via `tailscale serve`
+- **Access:** `https://{TAILSCALE_HOSTNAME}.{tailnet}.ts.net` (Tailnet-only, no public domain)
+- **Auth:** Optional `SB_USER=user:password` env var (Tailscale provides network-level access control)
+- **State:** Tailscale state persisted at `/data/tailscale/` across deploys; SB metadata in `/data/second-brain/.silverbullet/`
+- **Activation:** Set `TAILSCALE_AUTHKEY` env var on Railway to enable; without it, SB and Tailscale are skipped entirely
+
+| Env Var | Required | Default | Purpose |
+|---------|----------|---------|---------|
+| `TAILSCALE_AUTHKEY` | Yes | — | Tailscale auth key (create at admin.tailscale.com/keys, use reusable + ephemeral) |
+| `TAILSCALE_HOSTNAME` | No | `nanoclaw-sb` | Tailscale machine name |
+| `SB_USER` | No | — | Silver Bullet auth (`user:password`) |
+| `SB_PORT` | No | `3333` | Silver Bullet listen port |
+
+### Project Sync (Syncthing)
+
+[Syncthing](https://syncthing.net/) runs as a sidecar process inside the Railway container, providing real-time bidirectional sync of `/data/projects` to a laptop peer.
+
+- **Binary:** Installed via apt (`syncthing` package) at build time
+- **Port:** 8384 (localhost only, GUI/REST API)
+- **Sync target:** `/data/projects` on Railway ↔ `~/development/nanoclaw-projects` on laptop
+- **Scope:** Project files only — sessions, IPC, store, state, and runtime internals are explicitly excluded
+- **Transport:** Native Syncthing discovery/relay — does not depend on Tailscale (though Tailscale is present in the container for SilverBullet)
+- **Config:** Auto-generated on first boot if missing; programmatically configured via REST API (`src/syncthing-config.ts`)
+- **Peer setup:** Set `SYNCTHING_PEER_DEVICE_ID` to the laptop's device ID; without it, Syncthing starts but creates no shared folder
+- **Versioning:** Staggered versioning with configurable retention (default 30 days)
+- **Ignore:** `.stignore` on both peers excludes `.DS_Store` — Syncthing ignore config is local to each peer, so both sides must have it
+- **State:** Syncthing home at `/data/syncthing/` (config, keys, index DB) persisted across deploys
+- **Activation:** Set `SYNCTHING_ENABLED=true` on Railway to enable; without it, Syncthing is skipped entirely
+- **Boot behavior:** Soft-fail — if Syncthing setup fails, NanoClaw continues booting normally
+
+| Env Var | Required | Default | Purpose |
+|---------|----------|---------|---------|
+| `SYNCTHING_ENABLED` | Yes | `false` | Enable Syncthing sidecar |
+| `SYNCTHING_PEER_DEVICE_ID` | No | — | Laptop peer device ID (from `syncthing --device-id`) |
+| `SYNCTHING_FOLDER_ID` | No | `nanoclaw-projects` | Shared folder ID |
+| `SYNCTHING_FOLDER_PATH` | No | `/data/projects` | Path to sync |
+| `SYNCTHING_HOME_DIR` | No | `/data/syncthing` | Syncthing config/state directory |
+| `SYNCTHING_VERSIONING_DAYS` | No | `30` | Staggered versioning retention |
+| `SYNCTHING_GUI_ADDRESS` | No | `127.0.0.1:8384` | GUI/API listen address |
+
+---
+
+## 11. Channel System
 
 Channels self-register at startup via a factory pattern (`src/channels/registry.ts`). Missing credentials = channel skipped with a WARN log.
 
@@ -996,7 +1045,7 @@ Channels self-register at startup via a factory pattern (`src/channels/registry.
 
 ---
 
-## 11. Database Schema
+## 12. Database Schema
 
 SQLite database at `store/messages.db`. Key tables:
 
@@ -1008,7 +1057,7 @@ SQLite database at `store/messages.db`. Key tables:
 
 ---
 
-## 12. Skills System
+## 13. Skills System
 
 NanoClaw uses Claude Code skills (`.claude/skills/`) for setup and customization. Skills are prompts that guide Claude Code to transform the codebase.
 
@@ -1038,7 +1087,7 @@ Inside containers, agents have access to skill prompts at `/app/container/skills
 
 ---
 
-## 13. Key Files Reference
+## 14. Key Files Reference
 
 | File | Purpose |
 |------|---------|
@@ -1063,7 +1112,7 @@ Inside containers, agents have access to skill prompts at `/app/container/skills
 
 ---
 
-## 14. Development Commands
+## 15. Development Commands
 
 ```bash
 npm run dev          # Run with hot reload (tsx watch)
@@ -1078,7 +1127,7 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # restart
 
 ---
 
-## 15. Design Philosophy
+## 16. Design Philosophy
 
 From `docs/REQUIREMENTS.md`:
 
@@ -1091,54 +1140,7 @@ From `docs/REQUIREMENTS.md`:
 
 ---
 
-## 16. Remaining Work
-
-### Multi-Device Sync
-
-**Web access (Silver Bullet) — Implemented:**
-
-[Silver Bullet](https://github.com/silverbulletmd/silverbullet) runs as a sidecar process inside the NanoClaw container (Railway doesn't support shared volumes between services). It serves the Second Brain vault at `/data/second-brain` and is exposed privately via Tailscale.
-
-- **Binary:** Copied from `ghcr.io/silverbulletmd/silverbullet:latest` at build time
-- **Port:** 3333 (localhost only), proxied to HTTPS via `tailscale serve`
-- **Access:** `https://{TAILSCALE_HOSTNAME}.{tailnet}.ts.net` (Tailnet-only, no public domain)
-- **Auth:** Optional `SB_USER=user:password` env var (Tailscale provides network-level access control)
-- **State:** Tailscale state persisted at `/data/tailscale/` across deploys; SB metadata in `/data/second-brain/.silverbullet/`
-- **Activation:** Set `TAILSCALE_AUTHKEY` env var on Railway to enable; without it, SB and Tailscale are skipped entirely
-
-| Env Var | Required | Default | Purpose |
-|---------|----------|---------|---------|
-| `TAILSCALE_AUTHKEY` | Yes | — | Tailscale auth key (create at admin.tailscale.com/keys, use reusable + ephemeral) |
-| `TAILSCALE_HOSTNAME` | No | `nanoclaw-sb` | Tailscale machine name |
-| `SB_USER` | No | — | Silver Bullet auth (`user:password`) |
-| `SB_PORT` | No | `3333` | Silver Bullet listen port |
-
-**Project sync (Syncthing) — Implemented:**
-
-[Syncthing](https://syncthing.net/) runs as a sidecar process inside the Railway container, providing real-time bidirectional sync of `/data/projects` to a laptop peer.
-
-- **Binary:** Installed via apt (`syncthing` package) at build time
-- **Port:** 8384 (localhost only, GUI/REST API)
-- **Sync target:** `/data/projects` on Railway ↔ `~/development/nanoclaw-projects` on laptop
-- **Scope:** Project files only — sessions, IPC, store, state, and runtime internals are explicitly excluded
-- **Transport:** Native Syncthing discovery/relay — does not depend on Tailscale (though Tailscale is present in the container for SilverBullet)
-- **Config:** Auto-generated on first boot if missing; programmatically configured via REST API (`src/syncthing-config.ts`)
-- **Peer setup:** Set `SYNCTHING_PEER_DEVICE_ID` to the laptop's device ID; without it, Syncthing starts but creates no shared folder
-- **Versioning:** Staggered versioning with configurable retention (default 30 days)
-- **Ignore:** `.stignore` on both peers excludes `.DS_Store` — Syncthing ignore config is local to each peer, so both sides must have it
-- **State:** Syncthing home at `/data/syncthing/` (config, keys, index DB) persisted across deploys
-- **Activation:** Set `SYNCTHING_ENABLED=true` on Railway to enable; without it, Syncthing is skipped entirely
-- **Boot behavior:** Soft-fail — if Syncthing setup fails, NanoClaw continues booting normally
-
-| Env Var | Required | Default | Purpose |
-|---------|----------|---------|---------|
-| `SYNCTHING_ENABLED` | Yes | `false` | Enable Syncthing sidecar |
-| `SYNCTHING_PEER_DEVICE_ID` | No | — | Laptop peer device ID (from `syncthing --device-id`) |
-| `SYNCTHING_FOLDER_ID` | No | `nanoclaw-projects` | Shared folder ID |
-| `SYNCTHING_FOLDER_PATH` | No | `/data/projects` | Path to sync |
-| `SYNCTHING_HOME_DIR` | No | `/data/syncthing` | Syncthing config/state directory |
-| `SYNCTHING_VERSIONING_DAYS` | No | `30` | Staggered versioning retention |
-| `SYNCTHING_GUI_ADDRESS` | No | `127.0.0.1:8384` | GUI/API listen address |
+## 17. Remaining Work
 
 ### Notion Import Cleanup (Low Priority)
 
