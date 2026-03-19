@@ -51,6 +51,12 @@ import {
   scheduleCanonicalSnapshot,
   startStateSnapshotLoop,
 } from './state-backup.js';
+import {
+  cleanupExpiredMirrors,
+  getMirrorsForSource,
+  recordInbound,
+  recordOutbound,
+} from './mirror.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   isSenderAllowed,
@@ -70,6 +76,7 @@ let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
+let activeReplySourceJids: Record<string, string | undefined> = {};
 let messageLoopRunning = false;
 
 const channels: Channel[] = [];
@@ -166,6 +173,74 @@ export function _setRegisteredGroups(
 }
 
 /**
+ * Send a bot message and mirror it to any active mirror targets.
+ * User message mirroring is handled separately in the onMessage callback.
+ */
+async function sendWithMirror(jid: string, text: string): Promise<void> {
+  const channel = findChannel(channels, jid);
+  if (!channel) {
+    logger.warn({ jid }, 'No channel owns JID, cannot send message');
+    return;
+  }
+
+  await channel.sendMessage(jid, text);
+
+  // Record in ring buffer for retroactive lookback
+  recordOutbound(jid, text);
+
+  // Send to any active mirror targets
+  const activeMirrors = getMirrorsForSource(jid);
+  for (const mirror of activeMirrors) {
+    const targetChannel = findChannel(channels, mirror.targetJid);
+    if (!targetChannel) {
+      logger.warn(
+        { targetJid: mirror.targetJid },
+        'Mirror target channel not found',
+      );
+      continue;
+    }
+    try {
+      await targetChannel.sendMessage(mirror.targetJid, text, {
+        silent: true,
+      });
+    } catch (err) {
+      logger.warn(
+        { err, targetJid: mirror.targetJid },
+        'Failed to send mirror message',
+      );
+    }
+  }
+}
+
+function extractReplySourceChannelJid(
+  messages: NewMessage[],
+): string | undefined {
+  const latestMessage = messages[messages.length - 1];
+  const match = latestMessage?.content.match(
+    /^<source_channel jid="([^"]+)" \/>/,
+  );
+  return match?.[1];
+}
+
+/** @internal - exported for testing */
+export function _getAgentReplyTargets(
+  chatJid: string,
+  replyToSourceJid?: string,
+): string[] {
+  if (replyToSourceJid && replyToSourceJid !== chatJid) {
+    return [replyToSourceJid];
+  }
+  return [chatJid];
+}
+
+/** @internal - exported for testing */
+export function _extractReplySourceChannelJid(
+  messages: Pick<NewMessage, 'content'>[],
+): string | undefined {
+  return extractReplySourceChannelJid(messages as NewMessage[]);
+}
+
+/**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
  */
@@ -202,6 +277,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
+  activeReplySourceJids[chatJid] = extractReplySourceChannelJid(missedMessages);
   const prompt = formatMessages(missedMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
@@ -245,7 +321,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        await channel.sendMessage(chatJid, text);
+        const replyTargets = _getAgentReplyTargets(
+          chatJid,
+          activeReplySourceJids[chatJid],
+        );
+        for (const targetJid of replyTargets) {
+          await sendWithMirror(targetJid, text);
+        }
         outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
@@ -277,6 +359,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     // Roll back cursor so retries can re-process these messages
     lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
+    delete activeReplySourceJids[chatJid];
     logger.warn(
       { group: group.name },
       'Agent error, rolled back message cursor for retry',
@@ -478,6 +561,8 @@ async function startMessageLoop(): Promise<void> {
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
+          activeReplySourceJids[chatJid] =
+            extractReplySourceChannelJid(messagesToSend);
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           if (queue.sendMessage(chatJid, formatted)) {
@@ -542,6 +627,9 @@ async function main(): Promise<void> {
   logStateSummary();
   startStateSnapshotLoop();
 
+  // Periodically clean up expired message mirrors
+  setInterval(() => cleanupExpiredMirrors(), 60_000);
+
   // Start credential proxy (containers route API calls through this)
   const proxyServer = await startCredentialProxy(
     CREDENTIAL_PROXY_PORT,
@@ -579,6 +667,26 @@ async function main(): Promise<void> {
         }
       }
       storeMessage(msg);
+
+      // Mirror user messages to active mirror targets
+      if (!msg.is_from_me && !msg.is_bot_message) {
+        recordInbound(chatJid, msg.content, msg.sender_name);
+        const activeMirrors = getMirrorsForSource(chatJid);
+        for (const mirror of activeMirrors) {
+          const targetChannel = findChannel(channels, mirror.targetJid);
+          if (targetChannel) {
+            const mirrorText = `**${msg.sender_name}**: ${msg.content}`;
+            targetChannel
+              .sendMessage(mirror.targetJid, mirrorText, { silent: true })
+              .catch((err) =>
+                logger.warn(
+                  { err, targetJid: mirror.targetJid },
+                  'Failed to mirror user message',
+                ),
+              );
+          }
+        }
+      }
     },
     onChatMetadata: (
       chatJid: string,
@@ -705,13 +813,8 @@ async function main(): Promise<void> {
     onProcess: (groupJid, proc, containerName, groupFolder) =>
       queue.registerProcess(groupJid, proc, containerName, groupFolder),
     sendMessage: async (jid, rawText) => {
-      const channel = findChannel(channels, jid);
-      if (!channel) {
-        logger.warn({ jid }, 'No channel owns JID, cannot send message');
-        return;
-      }
       const text = formatOutbound(rawText);
-      if (text) await channel.sendMessage(jid, text);
+      if (text) await sendWithMirror(jid, text);
     },
   });
   // Find the Discord channel instance for create_project support
@@ -720,11 +823,7 @@ async function main(): Promise<void> {
     | undefined;
 
   startIpcWatcher({
-    sendMessage: (jid, text) => {
-      const channel = findChannel(channels, jid);
-      if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      return channel.sendMessage(jid, text);
-    },
+    sendMessage: (jid, text) => sendWithMirror(jid, text),
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroups: async (force: boolean) => {

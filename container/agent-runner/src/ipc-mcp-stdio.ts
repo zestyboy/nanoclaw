@@ -358,6 +358,7 @@ server.tool(
       type: 'execute_in_group',
       target_group_folder: args.target_group_folder,
       prompt: args.prompt,
+      source_jid: chatJid,
       timestamp: new Date().toISOString(),
     };
 
@@ -365,6 +366,80 @@ server.tool(
 
     return {
       content: [{ type: 'text' as const, text: `Execution request sent to group "${args.target_group_folder}".` }],
+    };
+  },
+);
+
+server.tool(
+  'activate_mirror',
+  `Activate message mirroring from a source channel to a target project channel. Elevated groups only.
+
+When activated, all messages (both user and bot) sent in the source channel will also appear in the target project channel. This provides conversation context in the project channel when users discuss project topics in #personal-assistant or #brain-router.
+
+The mirror auto-expires after the specified duration (default 30 minutes). If activated again for the same source→target pair, the expiry is refreshed.
+
+Any retroactive messages from the last 5 minutes are automatically sent to the target channel as a catch-up summary.`,
+  {
+    source_jid: z.string().optional().describe('JID of the source channel to mirror FROM. Omit to use the current chat JID (useful for direct Brain Router conversations).'),
+    target_jid: z.string().describe('JID of the target channel to mirror TO (e.g., "dc:{discord_channel_id}" from projects.yaml)'),
+    project_name: z.string().describe('Display name of the project (for formatting)'),
+    duration_minutes: z.number().optional().describe('How long the mirror stays active (default: 30 minutes)'),
+  },
+  async (args) => {
+    if (!hasElevatedPrivilege()) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only elevated groups can activate mirrors.' }],
+        isError: true,
+      };
+    }
+
+    const sourceJid = args.source_jid || chatJid;
+    const data = {
+      type: 'activate_mirror',
+      source_jid: sourceJid,
+      target_jid: args.target_jid,
+      project_name: args.project_name,
+      duration_minutes: args.duration_minutes || 30,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Mirror activated: messages in ${sourceJid} will also appear in ${args.target_jid} for ${args.duration_minutes || 30} minutes.` }],
+    };
+  },
+);
+
+server.tool(
+  'deactivate_mirror',
+  `Deactivate message mirroring for a source channel. Elevated groups only.
+
+If target_jid is provided, only that specific mirror is removed. Otherwise, all mirrors for the source are removed. Mirrors also auto-expire after their configured duration, so explicit deactivation is optional.`,
+  {
+    source_jid: z.string().optional().describe('JID of the source channel to stop mirroring FROM. Omit to use the current chat JID.'),
+    target_jid: z.string().optional().describe('JID of the specific target to stop mirroring TO (omit to remove all mirrors for this source)'),
+  },
+  async (args) => {
+    if (!hasElevatedPrivilege()) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only elevated groups can deactivate mirrors.' }],
+        isError: true,
+      };
+    }
+
+    const sourceJid = args.source_jid || chatJid;
+    const data: Record<string, string | undefined> = {
+      type: 'deactivate_mirror',
+      source_jid: sourceJid,
+      target_jid: args.target_jid,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Mirror deactivation requested for ${sourceJid}.` }],
     };
   },
 );

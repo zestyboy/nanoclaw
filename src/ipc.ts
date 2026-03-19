@@ -17,6 +17,7 @@ import {
   createTask,
   deleteTask,
   getTaskById,
+  storeChatMetadata,
   storeMessage,
   updateTask,
 } from './db.js';
@@ -27,6 +28,11 @@ import {
   resolveGroupFolderPath,
 } from './group-folder.js';
 import { logger } from './logger.js';
+import {
+  activateMirror,
+  deactivateMirror,
+  formatRetroactiveMessages,
+} from './mirror.js';
 import {
   assertPushChangesAllowed,
   resolvePushChangesBranch,
@@ -69,6 +75,39 @@ const QMD_QUERY_CANDIDATE_LIMIT = parsePositiveInt(
   process.env.QMD_QUERY_CANDIDATE_LIMIT,
   DEFAULT_QMD_CANDIDATE_LIMIT,
 );
+
+function inferChannelFromJid(jid: string): string | undefined {
+  if (jid.startsWith('dc:')) return 'discord';
+  if (jid.startsWith('tg:')) return 'telegram';
+  if (jid.endsWith('@g.us') || jid.endsWith('@s.whatsapp.net')) {
+    return 'whatsapp';
+  }
+  return undefined;
+}
+
+function ensureRegisteredGroupChatMetadata(
+  jid: string,
+  group: RegisteredGroup,
+  timestamp: string,
+): void {
+  storeChatMetadata(
+    jid,
+    timestamp,
+    group.name,
+    inferChannelFromJid(jid),
+    true,
+  );
+}
+
+function resolveProjectOwnerFolder(
+  sourceGroup: string,
+  registeredGroups: Record<string, RegisteredGroup>,
+): string {
+  const brainRouter = Object.values(registeredGroups).find(
+    (group) => group.folder === 'brain-router',
+  );
+  return brainRouter?.folder || sourceGroup;
+}
 
 export function startIpcWatcher(deps: IpcDeps): void {
   if (ipcWatcherRunning) {
@@ -245,6 +284,11 @@ export async function processTaskIpc(
     terms?: string[];
     start_date?: string;
     end_date?: string;
+    // For activate_mirror / deactivate_mirror
+    source_jid?: string;
+    target_jid?: string;
+    project_name?: string;
+    duration_minutes?: number;
     // For push_changes
     files?: Array<{ path: string; content: string }>;
     commitMessage?: string;
@@ -573,6 +617,23 @@ export async function processTaskIpc(
           );
           break;
         }
+        const targetGroup = registeredGroups[targetJid];
+
+        // Embed source channel JID in the prompt so the target agent
+        // (e.g., Brain Router) can activate mirroring back to the source
+        const promptContent = data.source_jid
+          ? `<source_channel jid="${data.source_jid}" />\n\n${data.prompt}`
+          : data.prompt;
+
+        // Synthetic dispatches need a chats row before the message insert.
+        // This covers unsynced channels and freshly created project channels.
+        if (targetGroup) {
+          ensureRegisteredGroupChatMetadata(
+            targetJid,
+            targetGroup,
+            new Date().toISOString(),
+          );
+        }
 
         // Store a synthetic message so the agent sees it as input
         const msgId = `router-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -581,7 +642,7 @@ export async function processTaskIpc(
           chat_jid: targetJid,
           sender: 'router',
           sender_name: 'Router',
-          content: data.prompt,
+          content: promptContent,
           timestamp: new Date().toISOString(),
           is_from_me: true,
         });
@@ -893,6 +954,64 @@ export async function processTaskIpc(
       }
       break;
 
+    case 'activate_mirror': {
+      if (!hasElevatedPrivilege(isMain, isTrusted)) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized activate_mirror attempt blocked',
+        );
+        break;
+      }
+      if (data.source_jid && data.target_jid) {
+        const result = activateMirror(
+          data.source_jid,
+          data.target_jid,
+          data.project_name || 'Unknown Project',
+          data.duration_minutes,
+        );
+        if (result.activated && result.retroactive.length > 0) {
+          // Send retroactive messages as a single catch-up message
+          const catchUp = formatRetroactiveMessages(result.retroactive);
+          if (catchUp) {
+            try {
+              await deps.sendMessage(data.target_jid, catchUp);
+              logger.info(
+                {
+                  targetJid: data.target_jid,
+                  messageCount: result.retroactive.length,
+                },
+                'Sent retroactive mirror messages',
+              );
+            } catch (err) {
+              logger.warn(
+                { err, targetJid: data.target_jid },
+                'Failed to send retroactive mirror messages',
+              );
+            }
+          }
+        }
+      } else {
+        logger.warn({ data }, 'activate_mirror: missing source_jid or target_jid');
+      }
+      break;
+    }
+
+    case 'deactivate_mirror': {
+      if (!hasElevatedPrivilege(isMain, isTrusted)) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized deactivate_mirror attempt blocked',
+        );
+        break;
+      }
+      if (data.source_jid) {
+        deactivateMirror(data.source_jid, data.target_jid);
+      } else {
+        logger.warn({ data }, 'deactivate_mirror: missing source_jid');
+      }
+      break;
+    }
+
     case 'push_changes': {
       // Main-only: push code changes to GitHub
       if (!isMain) {
@@ -1181,6 +1300,10 @@ async function handleCreateProject(
 
   const jid = `dc:${channelId}`;
   const folder = `project:${data.slug}`;
+  const projectOwnerFolder = resolveProjectOwnerFolder(
+    sourceGroup,
+    registeredGroups,
+  );
 
   // Register the group — project channels respond to all messages (no trigger needed)
   // No additionalMounts needed: the project dir IS the group dir
@@ -1196,13 +1319,15 @@ async function handleCreateProject(
   const projectDir = resolveGroupFolderPath(folder);
   fs.mkdirSync(path.join(projectDir, 'logs'), { recursive: true });
 
-  // Try to load template from the source group's templates/ directory
+  // Use the canonical project owner for templates and registry updates.
+  // This keeps Brain Router discovery working even if another elevated group
+  // invokes create_project directly.
   const templateName =
     data.projectType === 'code'
       ? 'code-project-claude.md'
       : 'general-project-claude.md';
-  const sourceGroupDir = resolveGroupFolderPath(sourceGroup);
-  const templatePath = path.join(sourceGroupDir, 'templates', templateName);
+  const projectOwnerDir = resolveGroupFolderPath(projectOwnerFolder);
+  const templatePath = path.join(projectOwnerDir, 'templates', templateName);
 
   let claudeContent: string;
   if (fs.existsSync(templatePath)) {
@@ -1222,8 +1347,8 @@ async function handleCreateProject(
     `# ${data.name} - Notes\n`,
   );
 
-  // Update projects.yaml in the source group's directory
-  const projectsYamlPath = path.join(sourceGroupDir, 'projects.yaml');
+  // Update the canonical project registry, not the calling group's directory.
+  const projectsYamlPath = path.join(projectOwnerDir, 'projects.yaml');
   let projects: any[] = [];
   if (fs.existsSync(projectsYamlPath)) {
     const existing = yaml.parse(fs.readFileSync(projectsYamlPath, 'utf-8'));

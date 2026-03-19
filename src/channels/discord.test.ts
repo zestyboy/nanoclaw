@@ -47,6 +47,10 @@ vi.mock('discord.js', () => {
     DirectMessages: 8,
   };
 
+  const MessageFlags = {
+    SuppressNotifications: 4096,
+  };
+
   class MockClient {
     eventHandlers = new Map<string, Handler[]>();
     user: any = { id: '999888777', tag: 'Andy#1234' };
@@ -139,6 +143,7 @@ vi.mock('discord.js', () => {
     Client: MockClient,
     Events,
     GatewayIntentBits,
+    MessageFlags,
     TextChannel,
     REST,
     Routes,
@@ -775,6 +780,54 @@ describe('DiscordChannel', () => {
       expect(mockChannel.send).toHaveBeenCalledTimes(2);
       expect(mockChannel.send).toHaveBeenNthCalledWith(1, 'x'.repeat(2000));
       expect(mockChannel.send).toHaveBeenNthCalledWith(2, 'x'.repeat(1000));
+    });
+
+    it('can send a silent message', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+
+      const mockChannel = {
+        send: vi.fn().mockResolvedValue(undefined),
+        sendTyping: vi.fn(),
+      };
+      currentClient().channels.fetch.mockResolvedValue(mockChannel);
+
+      await channel.sendMessage('dc:1234567890123456', 'Hello', {
+        silent: true,
+      });
+
+      expect(mockChannel.send).toHaveBeenCalledWith({
+        content: 'Hello',
+        flags: 4096,
+      });
+    });
+
+    it('sends long silent messages in chunks', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+
+      const mockChannel = {
+        send: vi.fn().mockResolvedValue(undefined),
+        sendTyping: vi.fn(),
+      };
+      currentClient().channels.fetch.mockResolvedValue(mockChannel);
+
+      const longText = 'z'.repeat(3000);
+      await channel.sendMessage('dc:1234567890123456', longText, {
+        silent: true,
+      });
+
+      expect(mockChannel.send).toHaveBeenCalledTimes(2);
+      expect(mockChannel.send).toHaveBeenNthCalledWith(1, {
+        content: 'z'.repeat(2000),
+        flags: 4096,
+      });
+      expect(mockChannel.send).toHaveBeenNthCalledWith(2, {
+        content: 'z'.repeat(1000),
+        flags: 4096,
+      });
     });
   });
 

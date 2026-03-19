@@ -4,6 +4,7 @@ import {
   Events,
   GatewayIntentBits,
   Message,
+  MessageFlags,
   REST,
   Routes,
   SlashCommandBuilder,
@@ -19,6 +20,7 @@ import {
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
+  SendMessageOptions,
 } from '../types.js';
 
 export interface DiscordChannelOpts {
@@ -225,7 +227,11 @@ export class DiscordChannel implements Channel {
     });
   }
 
-  async sendMessage(jid: string, text: string): Promise<void> {
+  async sendMessage(
+    jid: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<void> {
     if (!this.client) {
       logger.warn('Discord client not initialized');
       return;
@@ -245,10 +251,25 @@ export class DiscordChannel implements Channel {
       // Discord has a 2000 character limit per message — split if needed
       const MAX_LENGTH = 2000;
       if (text.length <= MAX_LENGTH) {
-        await textChannel.send(text);
+        if (options?.silent) {
+          await textChannel.send({
+            content: text,
+            flags: MessageFlags.SuppressNotifications,
+          });
+        } else {
+          await textChannel.send(text);
+        }
       } else {
         for (let i = 0; i < text.length; i += MAX_LENGTH) {
-          await textChannel.send(text.slice(i, i + MAX_LENGTH));
+          const chunk = text.slice(i, i + MAX_LENGTH);
+          if (options?.silent) {
+            await textChannel.send({
+              content: chunk,
+              flags: MessageFlags.SuppressNotifications,
+            });
+          } else {
+            await textChannel.send(chunk);
+          }
         }
       }
       logger.info({ jid, length: text.length }, 'Discord message sent');
