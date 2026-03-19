@@ -172,15 +172,10 @@ export function _setRegisteredGroups(
 }
 
 /**
- * Send a message and mirror it to any active mirror targets.
- * Used for all outbound bot messages. Pass isMirror=true when sending
- * the mirror copy itself to prevent infinite loops.
+ * Send a bot message and mirror it to any active mirror targets.
+ * User message mirroring is handled separately in the onMessage callback.
  */
-async function sendWithMirror(
-  jid: string,
-  text: string,
-  opts?: { isMirror?: boolean; senderName?: string },
-): Promise<void> {
+async function sendWithMirror(jid: string, text: string): Promise<void> {
   const channel = findChannel(channels, jid);
   if (!channel) {
     logger.warn({ jid }, 'No channel owns JID, cannot send message');
@@ -189,15 +184,8 @@ async function sendWithMirror(
 
   await channel.sendMessage(jid, text);
 
-  // Don't mirror mirrored messages (prevent loops)
-  if (opts?.isMirror) return;
-
   // Record in ring buffer for retroactive lookback
-  if (opts?.senderName) {
-    recordInbound(jid, text, opts.senderName);
-  } else {
-    recordOutbound(jid, text);
-  }
+  recordOutbound(jid, text);
 
   // Send to any active mirror targets
   const activeMirrors = getMirrorsForSource(jid);
@@ -211,11 +199,7 @@ async function sendWithMirror(
       continue;
     }
     try {
-      // User messages get sender attribution; bot messages go as-is
-      const mirrorText = opts?.senderName
-        ? `**${opts.senderName}**: ${text}`
-        : text;
-      await targetChannel.sendMessage(mirror.targetJid, mirrorText);
+      await targetChannel.sendMessage(mirror.targetJid, text);
     } catch (err) {
       logger.warn(
         { err, targetJid: mirror.targetJid },

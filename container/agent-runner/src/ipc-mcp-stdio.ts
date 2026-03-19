@@ -411,6 +411,38 @@ Any retroactive messages from the last 5 minutes are automatically sent to the t
 );
 
 server.tool(
+  'deactivate_mirror',
+  `Deactivate message mirroring for a source channel. Elevated groups only.
+
+If target_jid is provided, only that specific mirror is removed. Otherwise, all mirrors for the source are removed. Mirrors also auto-expire after their configured duration, so explicit deactivation is optional.`,
+  {
+    source_jid: z.string().describe('JID of the source channel to stop mirroring FROM'),
+    target_jid: z.string().optional().describe('JID of the specific target to stop mirroring TO (omit to remove all mirrors for this source)'),
+  },
+  async (args) => {
+    if (!hasElevatedPrivilege()) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only elevated groups can deactivate mirrors.' }],
+        isError: true,
+      };
+    }
+
+    const data: Record<string, string | undefined> = {
+      type: 'deactivate_mirror',
+      source_jid: args.source_jid,
+      target_jid: args.target_jid,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Mirror deactivation requested for ${args.source_jid}.` }],
+    };
+  },
+);
+
+server.tool(
   'create_project',
   `Create a new project with its own Discord channel and group registration. Main group only. Automatically creates the Discord channel, registers the group, sets up the folder with CLAUDE.md from a template, and updates projects.yaml.`,
   {
