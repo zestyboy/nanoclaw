@@ -374,13 +374,13 @@ server.tool(
   'activate_mirror',
   `Activate message mirroring from a source channel to a target project channel. Elevated groups only.
 
-When activated, all messages (both user and bot) sent in the source channel will also appear in the target project channel. This provides conversation context in the project channel when users discuss project topics in #personal-assistant.
+When activated, all messages (both user and bot) sent in the source channel will also appear in the target project channel. This provides conversation context in the project channel when users discuss project topics in #personal-assistant or #brain-router.
 
 The mirror auto-expires after the specified duration (default 30 minutes). If activated again for the same source→target pair, the expiry is refreshed.
 
 Any retroactive messages from the last 5 minutes are automatically sent to the target channel as a catch-up summary.`,
   {
-    source_jid: z.string().describe('JID of the source channel to mirror FROM (e.g., the PA channel JID from <source_channel> tag)'),
+    source_jid: z.string().optional().describe('JID of the source channel to mirror FROM. Omit to use the current chat JID (useful for direct Brain Router conversations).'),
     target_jid: z.string().describe('JID of the target channel to mirror TO (e.g., "dc:{discord_channel_id}" from projects.yaml)'),
     project_name: z.string().describe('Display name of the project (for formatting)'),
     duration_minutes: z.number().optional().describe('How long the mirror stays active (default: 30 minutes)'),
@@ -393,9 +393,10 @@ Any retroactive messages from the last 5 minutes are automatically sent to the t
       };
     }
 
+    const sourceJid = args.source_jid || chatJid;
     const data = {
       type: 'activate_mirror',
-      source_jid: args.source_jid,
+      source_jid: sourceJid,
       target_jid: args.target_jid,
       project_name: args.project_name,
       duration_minutes: args.duration_minutes || 30,
@@ -405,7 +406,7 @@ Any retroactive messages from the last 5 minutes are automatically sent to the t
     writeIpcFile(TASKS_DIR, data);
 
     return {
-      content: [{ type: 'text' as const, text: `Mirror activated: messages in ${args.source_jid} will also appear in ${args.target_jid} for ${args.duration_minutes || 30} minutes.` }],
+      content: [{ type: 'text' as const, text: `Mirror activated: messages in ${sourceJid} will also appear in ${args.target_jid} for ${args.duration_minutes || 30} minutes.` }],
     };
   },
 );
@@ -416,7 +417,7 @@ server.tool(
 
 If target_jid is provided, only that specific mirror is removed. Otherwise, all mirrors for the source are removed. Mirrors also auto-expire after their configured duration, so explicit deactivation is optional.`,
   {
-    source_jid: z.string().describe('JID of the source channel to stop mirroring FROM'),
+    source_jid: z.string().optional().describe('JID of the source channel to stop mirroring FROM. Omit to use the current chat JID.'),
     target_jid: z.string().optional().describe('JID of the specific target to stop mirroring TO (omit to remove all mirrors for this source)'),
   },
   async (args) => {
@@ -427,9 +428,10 @@ If target_jid is provided, only that specific mirror is removed. Otherwise, all 
       };
     }
 
+    const sourceJid = args.source_jid || chatJid;
     const data: Record<string, string | undefined> = {
       type: 'deactivate_mirror',
-      source_jid: args.source_jid,
+      source_jid: sourceJid,
       target_jid: args.target_jid,
       timestamp: new Date().toISOString(),
     };
@@ -437,7 +439,7 @@ If target_jid is provided, only that specific mirror is removed. Otherwise, all 
     writeIpcFile(TASKS_DIR, data);
 
     return {
-      content: [{ type: 'text' as const, text: `Mirror deactivation requested for ${args.source_jid}.` }],
+      content: [{ type: 'text' as const, text: `Mirror deactivation requested for ${sourceJid}.` }],
     };
   },
 );

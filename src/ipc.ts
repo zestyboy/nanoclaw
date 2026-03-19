@@ -17,6 +17,7 @@ import {
   createTask,
   deleteTask,
   getTaskById,
+  storeChatMetadata,
   storeMessage,
   updateTask,
 } from './db.js';
@@ -74,6 +75,39 @@ const QMD_QUERY_CANDIDATE_LIMIT = parsePositiveInt(
   process.env.QMD_QUERY_CANDIDATE_LIMIT,
   DEFAULT_QMD_CANDIDATE_LIMIT,
 );
+
+function inferChannelFromJid(jid: string): string | undefined {
+  if (jid.startsWith('dc:')) return 'discord';
+  if (jid.startsWith('tg:')) return 'telegram';
+  if (jid.endsWith('@g.us') || jid.endsWith('@s.whatsapp.net')) {
+    return 'whatsapp';
+  }
+  return undefined;
+}
+
+function ensureRegisteredGroupChatMetadata(
+  jid: string,
+  group: RegisteredGroup,
+  timestamp: string,
+): void {
+  storeChatMetadata(
+    jid,
+    timestamp,
+    group.name,
+    inferChannelFromJid(jid),
+    true,
+  );
+}
+
+function resolveProjectOwnerFolder(
+  sourceGroup: string,
+  registeredGroups: Record<string, RegisteredGroup>,
+): string {
+  const brainRouter = Object.values(registeredGroups).find(
+    (group) => group.folder === 'brain-router',
+  );
+  return brainRouter?.folder || sourceGroup;
+}
 
 export function startIpcWatcher(deps: IpcDeps): void {
   if (ipcWatcherRunning) {
@@ -583,12 +617,23 @@ export async function processTaskIpc(
           );
           break;
         }
+        const targetGroup = registeredGroups[targetJid];
 
         // Embed source channel JID in the prompt so the target agent
         // (e.g., Brain Router) can activate mirroring back to the source
         const promptContent = data.source_jid
           ? `<source_channel jid="${data.source_jid}" />\n\n${data.prompt}`
           : data.prompt;
+
+        // Synthetic dispatches need a chats row before the message insert.
+        // This covers unsynced channels and freshly created project channels.
+        if (targetGroup) {
+          ensureRegisteredGroupChatMetadata(
+            targetJid,
+            targetGroup,
+            new Date().toISOString(),
+          );
+        }
 
         // Store a synthetic message so the agent sees it as input
         const msgId = `router-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1255,6 +1300,10 @@ async function handleCreateProject(
 
   const jid = `dc:${channelId}`;
   const folder = `project:${data.slug}`;
+  const projectOwnerFolder = resolveProjectOwnerFolder(
+    sourceGroup,
+    registeredGroups,
+  );
 
   // Register the group — project channels respond to all messages (no trigger needed)
   // No additionalMounts needed: the project dir IS the group dir
@@ -1270,13 +1319,15 @@ async function handleCreateProject(
   const projectDir = resolveGroupFolderPath(folder);
   fs.mkdirSync(path.join(projectDir, 'logs'), { recursive: true });
 
-  // Try to load template from the source group's templates/ directory
+  // Use the canonical project owner for templates and registry updates.
+  // This keeps Brain Router discovery working even if another elevated group
+  // invokes create_project directly.
   const templateName =
     data.projectType === 'code'
       ? 'code-project-claude.md'
       : 'general-project-claude.md';
-  const sourceGroupDir = resolveGroupFolderPath(sourceGroup);
-  const templatePath = path.join(sourceGroupDir, 'templates', templateName);
+  const projectOwnerDir = resolveGroupFolderPath(projectOwnerFolder);
+  const templatePath = path.join(projectOwnerDir, 'templates', templateName);
 
   let claudeContent: string;
   if (fs.existsSync(templatePath)) {
@@ -1296,8 +1347,8 @@ async function handleCreateProject(
     `# ${data.name} - Notes\n`,
   );
 
-  // Update projects.yaml in the source group's directory
-  const projectsYamlPath = path.join(sourceGroupDir, 'projects.yaml');
+  // Update the canonical project registry, not the calling group's directory.
+  const projectsYamlPath = path.join(projectOwnerDir, 'projects.yaml');
   let projects: any[] = [];
   if (fs.existsSync(projectsYamlPath)) {
     const existing = yaml.parse(fs.readFileSync(projectsYamlPath, 'utf-8'));

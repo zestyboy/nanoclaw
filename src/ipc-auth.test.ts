@@ -2,8 +2,10 @@ import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   _initTestDatabase,
+  getAllChats,
   createTask,
   getAllTasks,
+  getMessagesSince,
   getRegisteredGroup,
   getTaskById,
   setRegisteredGroup,
@@ -36,9 +38,11 @@ const THIRD_GROUP: RegisteredGroup = {
 
 let groups: Record<string, RegisteredGroup>;
 let deps: IpcDeps;
+let enqueuedJids: string[];
 
 beforeEach(() => {
   _initTestDatabase();
+  enqueuedJids = [];
 
   groups = {
     'main@g.us': MAIN_GROUP,
@@ -62,7 +66,9 @@ beforeEach(() => {
     syncGroups: async () => {},
     getAvailableGroups: () => [],
     writeGroupsSnapshot: () => {},
-    enqueueMessageCheck: () => {},
+    enqueueMessageCheck: (jid) => {
+      enqueuedJids.push(jid);
+    },
   };
 });
 
@@ -379,6 +385,55 @@ describe('register_group authorization', () => {
     );
 
     expect(groups['new@g.us']).toBeUndefined();
+  });
+});
+
+// --- execute_in_group dispatch ---
+
+describe('execute_in_group dispatch', () => {
+  it('creates missing chat metadata before storing a synthetic message', async () => {
+    const discordTarget: RegisteredGroup = {
+      name: 'Brain Router',
+      folder: 'brain-router',
+      trigger: '@Router',
+      added_at: '2024-01-01T00:00:00.000Z',
+      trusted: true,
+    };
+    groups['dc:222'] = discordTarget;
+    setRegisteredGroup('dc:222', discordTarget);
+
+    await processTaskIpc(
+      {
+        type: 'execute_in_group',
+        target_group_folder: 'brain-router',
+        prompt: 'Route this message',
+        source_jid: 'dc:111',
+      },
+      'whatsapp_main',
+      true,
+      false,
+      deps,
+    );
+
+    expect(enqueuedJids).toEqual(['dc:222']);
+
+    const chats = getAllChats();
+    expect(
+      chats.find(
+        (chat) =>
+          chat.jid === 'dc:222' &&
+          chat.name === 'Brain Router' &&
+          chat.channel === 'discord' &&
+          chat.is_group === 1,
+      ),
+    ).toBeDefined();
+
+    const messages = getMessagesSince('dc:222', '', 'NanoClaw');
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toContain(
+      '<source_channel jid="dc:111" />',
+    );
+    expect(messages[0].content).toContain('Route this message');
   });
 });
 

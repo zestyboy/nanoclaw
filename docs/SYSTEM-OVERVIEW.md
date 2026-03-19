@@ -755,15 +755,17 @@ The `push_changes` IPC operation is gated by `src/push-changes-policy.ts`:
 
 ### Message Mirroring
 
-When users discuss projects in #personal-assistant, the conversation stays there — the project's Discord channel has no record. Message mirroring solves this by duplicating messages from a source channel (e.g., PA) to a target project channel.
+When users discuss projects in #personal-assistant or #brain-router, the conversation stays there — the project's Discord channel has no record. Message mirroring solves this by duplicating messages from a source channel to a target project channel.
 
 **How it works:**
 
-1. PA delegates to Brain Router via `execute_in_group`, which now includes `source_jid` metadata
-2. Brain Router identifies the project and calls `activate_mirror(source_jid, target_jid, project_name)`
+1. PA can delegate to Brain Router via `execute_in_group`, which includes `source_jid` metadata when the original conversation started elsewhere
+2. Brain Router identifies the project and calls `activate_mirror(source_jid?, target_jid, project_name)`
 3. Host stores the mirror mapping in memory (auto-expires after 30 minutes)
 4. All subsequent messages — both user messages and bot responses — in the source channel are also sent to the project channel
-5. Any recent messages from the last 5 minutes are retroactively sent as a catch-up summary
+5. On a genuinely new activation, any recent messages from the last 5 minutes are retroactively sent as a catch-up summary
+
+If `source_jid` is omitted, `activate_mirror` uses the current Brain Router chat JID. That covers direct conversations in `#brain-router`.
 
 **What gets mirrored:**
 - User messages: appear as `**Username**: message text`
@@ -775,8 +777,15 @@ When users discuss projects in #personal-assistant, the conversation stays there
 - Loop prevention: bidirectional mirrors are rejected
 - Lost on restart (by design — next Brain Router interaction re-activates)
 - Retroactive lookback uses an in-memory ring buffer (last 50 messages, up to 5 minutes)
+- Refreshing an already-active mirror does not replay the catch-up summary again
+- Delegated Brain Router replies go back to the original source channel, not to `#brain-router`
+- Direct `#brain-router` conversations can activate mirroring without a `source_jid`
+- Discord mirror-target sends use notification suppression to reduce duplicate alert noise in project channels
 
-**Implementation:** `src/mirror.ts` (state management), `src/ipc.ts` (IPC handlers), `src/index.ts` (outbound hooks)
+**Implementation:** `src/mirror.ts` (state management), `src/ipc.ts` (IPC handlers), `src/index.ts` (outbound hooks + reply target selection), `src/channels/discord.ts` (silent mirror sends)
+
+**Project registry note:**
+- `create_project` writes the canonical project registry to Brain Router's project owner folder when that group exists. This prevents a split-brain state where the Discord project channel exists but Brain Router cannot resolve the project from `projects.yaml`.
 
 ### IPC Flow (execute_in_group example)
 

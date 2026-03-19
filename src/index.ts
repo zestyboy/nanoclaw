@@ -76,6 +76,7 @@ let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
+let activeReplySourceJids: Record<string, string | undefined> = {};
 let messageLoopRunning = false;
 
 const channels: Channel[] = [];
@@ -199,7 +200,9 @@ async function sendWithMirror(jid: string, text: string): Promise<void> {
       continue;
     }
     try {
-      await targetChannel.sendMessage(mirror.targetJid, text);
+      await targetChannel.sendMessage(mirror.targetJid, text, {
+        silent: true,
+      });
     } catch (err) {
       logger.warn(
         { err, targetJid: mirror.targetJid },
@@ -207,6 +210,34 @@ async function sendWithMirror(jid: string, text: string): Promise<void> {
       );
     }
   }
+}
+
+function extractReplySourceChannelJid(
+  messages: NewMessage[],
+): string | undefined {
+  const latestMessage = messages[messages.length - 1];
+  const match = latestMessage?.content.match(
+    /^<source_channel jid="([^"]+)" \/>/,
+  );
+  return match?.[1];
+}
+
+/** @internal - exported for testing */
+export function _getAgentReplyTargets(
+  chatJid: string,
+  replyToSourceJid?: string,
+): string[] {
+  if (replyToSourceJid && replyToSourceJid !== chatJid) {
+    return [replyToSourceJid];
+  }
+  return [chatJid];
+}
+
+/** @internal - exported for testing */
+export function _extractReplySourceChannelJid(
+  messages: Pick<NewMessage, 'content'>[],
+): string | undefined {
+  return extractReplySourceChannelJid(messages as NewMessage[]);
 }
 
 /**
@@ -246,6 +277,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
+  activeReplySourceJids[chatJid] = extractReplySourceChannelJid(missedMessages);
   const prompt = formatMessages(missedMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
@@ -289,7 +321,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        await sendWithMirror(chatJid, text);
+        const replyTargets = _getAgentReplyTargets(
+          chatJid,
+          activeReplySourceJids[chatJid],
+        );
+        for (const targetJid of replyTargets) {
+          await sendWithMirror(targetJid, text);
+        }
         outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
@@ -321,6 +359,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     // Roll back cursor so retries can re-process these messages
     lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
+    delete activeReplySourceJids[chatJid];
     logger.warn(
       { group: group.name },
       'Agent error, rolled back message cursor for retry',
@@ -522,6 +561,8 @@ async function startMessageLoop(): Promise<void> {
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
+          activeReplySourceJids[chatJid] =
+            extractReplySourceChannelJid(messagesToSend);
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           if (queue.sendMessage(chatJid, formatted)) {
@@ -636,7 +677,7 @@ async function main(): Promise<void> {
           if (targetChannel) {
             const mirrorText = `**${msg.sender_name}**: ${msg.content}`;
             targetChannel
-              .sendMessage(mirror.targetJid, mirrorText)
+              .sendMessage(mirror.targetJid, mirrorText, { silent: true })
               .catch((err) =>
                 logger.warn(
                   { err, targetJid: mirror.targetJid },

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import {
   activateMirror,
@@ -16,6 +16,10 @@ beforeEach(() => {
   _clearAllMirrors();
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe('activateMirror', () => {
   it('creates a mirror and returns no retroactive records when buffer is empty', () => {
     const result = activateMirror('dc:111', 'dc:222', 'Test Project');
@@ -26,8 +30,9 @@ describe('activateMirror', () => {
 
   it('refreshes expiry when activated again for the same pair', () => {
     activateMirror('dc:111', 'dc:222', 'Test Project', 10);
-    activateMirror('dc:111', 'dc:222', 'Test Project', 60);
+    const result = activateMirror('dc:111', 'dc:222', 'Test Project', 60);
     expect(_getActiveMirrorCount()).toBe(1);
+    expect(result.retroactive).toHaveLength(0);
   });
 
   it('allows multiple mirrors from the same source', () => {
@@ -80,6 +85,18 @@ describe('activateMirror', () => {
     const result = activateMirror('dc:111', 'dc:222', 'Test Project');
     expect(result.retroactive).toHaveLength(1);
     expect(result.retroactive[0].text).toBe('From source');
+  });
+
+  it('treats an expired mirror as a new activation and returns catch-up', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    activateMirror('dc:111', 'dc:222', 'Test Project', 1);
+
+    vi.spyOn(Date, 'now').mockReturnValue(70_000);
+    recordOutbound('dc:111', 'Recent bot update');
+
+    const result = activateMirror('dc:111', 'dc:222', 'Test Project', 30);
+    expect(result.retroactive).toHaveLength(1);
+    expect(result.retroactive[0].text).toBe('Recent bot update');
   });
 });
 

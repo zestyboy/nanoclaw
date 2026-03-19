@@ -80,10 +80,18 @@ export interface TaskRunLog {
 
 // --- Channel abstraction ---
 
+export interface SendMessageOptions {
+  silent?: boolean;
+}
+
 export interface Channel {
   name: string;
   connect(): Promise<void>;
-  sendMessage(jid: string, text: string): Promise<void>;
+  sendMessage(
+    jid: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<void>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   disconnect(): Promise<void>;

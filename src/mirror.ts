@@ -54,6 +54,12 @@ export function activateMirror(
   }
 
   let entries = mirrors.get(sourceJid) || [];
+  entries = entries.filter((e) => e.expiresAt > now);
+  if (entries.length === 0) {
+    mirrors.delete(sourceJid);
+  } else {
+    mirrors.set(sourceJid, entries);
+  }
 
   // Check if this exact mirror already exists — refresh expiry
   const existing = entries.find((e) => e.targetJid === targetJid);
@@ -61,6 +67,7 @@ export function activateMirror(
     existing.expiresAt = now + durationMs;
     existing.activatedAt = now;
     logger.info({ sourceJid, targetJid, projectName }, 'Mirror refreshed');
+    return { activated: true, retroactive: [] };
   } else {
     // Enforce max mirrors per source
     if (entries.length >= MAX_MIRRORS_PER_SOURCE) {
