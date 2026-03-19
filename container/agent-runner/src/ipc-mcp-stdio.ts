@@ -688,7 +688,9 @@ server.tool(
   `Push file changes to the NanoClaw GitHub repository. Main group only.
 
 On Railway, uses the GitHub API to create commits directly. Locally, uses git CLI.
-By default, pushes directly to the main branch (triggering a Railway redeploy).
+The default target branch comes from the host environment. Railway deployments
+can also require PR-only mode, in which case direct pushes are rejected unless
+create_pr=true is set.
 Set create_pr=true to create a pull request instead for human review.
 
 Use this for:
@@ -696,7 +698,8 @@ Use this for:
 - Adding new skills or templates
 - Modifying agent behavior or system architecture
 
-IMPORTANT: Only push changes you are confident about. The commit will trigger a redeploy on Railway.`,
+IMPORTANT: Only push changes you are confident about. Direct pushes on
+production Railway environments may trigger a redeploy.`,
   {
     files: z.array(z.object({
       path: z.string().describe('File path relative to repo root (e.g., "groups/main/CLAUDE.md")'),

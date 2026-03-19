@@ -73,6 +73,7 @@ Think of it as: you text a thought to your PA. If it's a quick task, the PA hand
 | `src/db.ts` | SQLite: messages, chats, sessions, groups, tasks |
 | `src/mount-security.ts` | Validates additional mounts against allowlist |
 | `src/credential-proxy.ts` | HTTP proxy that injects API keys without exposing them to containers |
+| `src/push-changes-policy.ts` | Push-changes branch resolution and pr-only enforcement |
 | `container/agent-runner/src/index.ts` | Agent entry point inside containers |
 | `container/agent-runner/src/ipc-mcp-stdio.ts` | MCP tools available to agents (schedule, send, search, execute, create project) |
 
@@ -737,9 +738,17 @@ Agents communicate with the host via filesystem IPC. The agent writes a JSON tas
 | `search_second_brain` | Any group | Search second brain vault via qmd |
 | `reindex_public_knowledge` | Elevated only | Trigger qmd reindex (fire-and-forget) |
 | `reindex_second_brain` | Elevated only | Trigger qmd reindex (fire-and-forget) |
-| `push_changes` | Main only | Push code changes to GitHub repo (triggers Railway auto-redeploy) |
+| `push_changes` | Main only | Push code changes to GitHub repo (subject to push-changes policy) |
 
 **Elevated** = `isMain` or `trusted`. **Main only** = `isMain` exclusively.
+
+### Push Changes Policy
+
+The `push_changes` IPC operation is gated by `src/push-changes-policy.ts`:
+
+1. **Branch resolution:** If the request omits a branch, the host uses `PUSH_CHANGES_DEFAULT_BRANCH` (defaults to `main`).
+2. **Direct-mode enforcement:** On Railway, if `PUSH_CHANGES_DIRECT_MODE=pr-only`, the host rejects any `push_changes` request that does not set `create_pr=true`. This prevents the dev environment from pushing directly to `main`.
+3. **Local passthrough:** Outside Railway (or when `PUSH_CHANGES_DIRECT_MODE=allow`), direct pushes are permitted as before.
 
 ### IPC Flow (execute_in_group example)
 
@@ -776,17 +785,20 @@ Agents communicate with the host via filesystem IPC. The agent writes a JSON tas
 
 ### Railway (Cloud)
 
-**Project:** `fulfilling-adventure` (workspace: `My Projects`)
+NanoClaw runs in one Railway project with two persistent environments:
 
-| Service | Purpose | Status |
-|---------|---------|--------|
-| **nanoclaw** | Live NanoClaw orchestrator — handles messaging, Brain Router, agent spawning | Running (always-on) |
-| **notion-import** | One-off service for processing Notion HTML exports into Obsidian vaults | Can be torn down after use |
+| Environment | Service | Purpose | Deploy Method |
+|-------------|---------|---------|---------------|
+| `production` | `nanoclaw` | Live NanoClaw orchestrator | Auto-deploy from GitHub `main` |
+| `dev` | `nanoclaw` | Feature validation and config iteration | Local `railway up` via wrapper |
+
+`notion-import` remains a separate one-off Railway service when needed.
 
 **How it works:**
 - Single container deployment via `Dockerfile.railway`
 - No Docker-in-Docker — agents run as child processes (`src/railway-runner.ts`)
 - Railway persistent volume mounted at `/data` for all state between deploys
+- Separate `/data` volume state per environment/service instance
 
 **Volume layout (`/data`):**
 
@@ -815,7 +827,7 @@ Agents communicate with the host via filesystem IPC. The agent writes a JSON tas
 - Background loop: backup vaults to R2 every 12 hours
 - After writes: host-managed reindex updates qmd state, then syncs the changed vault back to R2
 
-**Environment variables (set in Railway dashboard → Variables tab → "+ New Variable"):**
+**Runtime variables (set per environment/service):**
 
 | Variable | Purpose |
 |----------|---------|
@@ -834,65 +846,77 @@ Agents communicate with the host via filesystem IPC. The agent writes a JSON tas
 | `R2_STATE_BUCKET` | Optional bucket for canonical state snapshots |
 | `STATE_VERIFY_ENFORCE` | `false` = report-only boot verification, `true` = repair/fail-closed |
 | `FORCE_STATE_RESTORE` | Force canonical state restore from `R2_STATE_BUCKET` on next boot |
+| `PUSH_CHANGES_DEFAULT_BRANCH` | Default branch for in-app `push_changes` (defaults to `main`) |
+| `PUSH_CHANGES_DIRECT_MODE` | `allow` or `pr-only`; use `pr-only` on `dev` |
 | `SYNCTHING_ENABLED` | Enable Syncthing sidecar for project sync (`true`/`false`) |
 | `SYNCTHING_PEER_DEVICE_ID` | Laptop peer device ID for Syncthing pairing |
 
-**Railway CLI access:**
+**Environment-specific rules:**
+
+- `production`
+  - Auto-deploy from `main`
+  - Production bot tokens, production volume state, production Syncthing peer
+  - No normal local `railway up`
+- `dev`
+  - Normal target for local `railway up`
+  - Separate environment variables and volume state
+  - `PUSH_CHANGES_DIRECT_MODE=pr-only`
+  - Syncthing disabled by default
+  - Requires at least one dev channel credential before the service can stay up
+
+**Local Railway wrappers:**
 
 ```bash
-# Link to nanoclaw service (do this first)
-railway service nanoclaw
-
-# Stream logs
-railway logs
-
-# SSH into running container (for migrations, debugging)
-railway ssh -s nanoclaw
-
-# Manual state verification inside the running container
-node dist/verify-railway-state.js --mode manual
-
-# Local subshell with Railway env vars (runs commands locally, not on Railway)
-railway shell
-
-# Deploy from local working directory (without pushing to GitHub)
-railway up
-
-# Redeploy (restart with same code)
-railway redeploy -s nanoclaw --yes
-
-# Set environment variables
-railway variables set KEY=value
+npm run railway:dev:deploy
+npm run railway:dev:status -- --json
+npm run railway:dev:logs -- --lines 200
+npm run railway:prod:status -- --json
+npm run railway:prod:logs -- --lines 200
 ```
 
-**Deploy flow:** Push to GitHub → Railway auto-deploys the `nanoclaw` service.
-
-### Two-Project Architecture (Planned)
-
-NanoClaw is stateful and operationally sensitive (persistent `/data` volume, live bot tokens, scheduled tasks, Syncthing peer state). To prevent development work from accidentally affecting production, the target architecture uses two separate Railway projects:
-
-| Project | Purpose | Deploy Method |
-|---------|---------|---------------|
-| `nanoclaw-prod` | Production only | Auto-deploy from GitHub `main` |
-| `nanoclaw-dev` | Development/iteration | `railway up` from local machine |
-
-**Key separation rules:**
-- Separate volumes, secrets, bot tokens, and Syncthing identities per project
-- Never reuse production messaging bot tokens in the dev project
-- Production changes arrive only through merge to `main` — no local `railway up` except emergencies
-- Dev project should not auto-deploy from `main`
-
-**Recommended CLI pattern** — always pass explicit project/service to avoid targeting mistakes:
+The wrappers always resolve explicit project/environment/service values from
+local env or `.env`. Dev deploys refuse to run from `main` unless you pass
+`--allow-main`. Status and log commands link in a temp directory so they never
+mutate the repo-local Railway link state.
 
 ```bash
-railway status --project nanoclaw-dev --service nanoclaw
-railway up --project nanoclaw-dev --service nanoclaw --detach -m "dev deploy"
-railway logs --project nanoclaw-prod --service nanoclaw
+RAILWAY_PROJECT_ID=<live NanoClaw project id>
+RAILWAY_PROD_ENVIRONMENT=production
+RAILWAY_DEV_ENVIRONMENT=dev
 ```
 
-**Syncthing:** Production keeps current Syncthing setup. Dev starts without Syncthing (Option A); add a separate peer later only if needed.
+**Feature workflow:**
 
-See `Two-Project Railway Plan for NanoClaw.md` in the repo root for the full planning document including secrets inventory, seed strategy, bot identity separation, and validation checklists.
+1. Create a local feature branch.
+2. Deploy it to `dev` with `npm run railway:dev:deploy`.
+3. Validate behavior in the dev Railway environment.
+4. Open and merge a PR to `main`.
+5. `production` auto-deploys from GitHub `main`.
+
+Code promotion happens through Git merge, not by copying dev Railway state into
+prod.
+
+**Seed dev from prod once:**
+
+- `npm run railway:dev:seed`
+- Copies:
+  - `/data/groups`
+  - `/data/projects`
+  - `/data/public-knowledge`
+  - `/data/second-brain`
+- Optional: `node --import tsx ./scripts/seed-railway-dev-state.ts --include-state`
+- Excludes:
+  - `/data/sessions`
+  - `/data/ipc`
+  - `/data/store/messages.db`
+  - `/data/syncthing`
+  - logs
+  - production auth/session artifacts
+
+The seed is one-time initialization only. Dev diverges independently after that.
+
+If you created a temporary standalone `nanoclaw-dev` project during the earlier
+two-project attempt, retire it after the environment-based setup is verified.
 
 ### Config Constants (`src/config.ts`)
 
@@ -907,6 +931,11 @@ export const PUBLIC_KNOWLEDGE_DIR =
 export const SECOND_BRAIN_DIR =
   process.env.NANOCLAW_SECOND_BRAIN_DIR ||
   (IS_RAILWAY ? '/data/second-brain' : '');
+
+export const PUSH_CHANGES_DEFAULT_BRANCH =
+  process.env.PUSH_CHANGES_DEFAULT_BRANCH || 'main';
+export const PUSH_CHANGES_DIRECT_MODE: PushChangesDirectMode =
+  process.env.PUSH_CHANGES_DIRECT_MODE === 'pr-only' ? 'pr-only' : 'allow';
 ```
 
 ### Railway Entrypoint (`docker-entrypoint-railway.sh`)
@@ -1024,8 +1053,11 @@ Inside containers, agents have access to skill prompts at `/app/container/skills
 | `src/qmd-state.ts` | qmd derived-state tracking, compatibility checks, lock-based reindex coordination |
 | `src/state-backup.ts` | Canonical state snapshot plumbing (DB, groups, projects, state) |
 | `src/syncthing-config.ts` | Syncthing REST API auto-configuration for project sync |
+| `src/push-changes-policy.ts` | Push-changes branch resolution and pr-only enforcement |
 | `docker-entrypoint-railway.sh` | Railway startup: R2 sync, boot verification, backup loop |
-| `Two-Project Railway Plan for NanoClaw.md` | Prod/dev Railway project separation plan |
+| `scripts/railway-common.ts` | Railway target config resolution (project ID, environment, service) |
+| `scripts/railway.ts` | Railway wrapper CLI for deploy/status/logs |
+| `scripts/seed-railway-dev-state.ts` | Selective prod→dev volume seed over Railway SSH |
 | `scripts/notion-to-obsidian.ts` | Custom Notion HTML → Obsidian converter |
 | `scripts/migrate-pa-split-railway.ts` | Migration script: split main group into PA + Brain Router |
 

@@ -18,7 +18,13 @@
     "auth": "tsx src/whatsapp-auth.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "notion-import": "tsx scripts/notion-to-obsidian.ts"
+    "notion-import": "tsx scripts/notion-to-obsidian.ts",
+    "railway:dev:deploy": "node --import tsx ./scripts/railway.ts dev deploy",
+    "railway:dev:status": "node --import tsx ./scripts/railway.ts dev status",
+    "railway:dev:logs": "node --import tsx ./scripts/railway.ts dev logs",
+    "railway:prod:status": "node --import tsx ./scripts/railway.ts prod status",
+    "railway:prod:logs": "node --import tsx ./scripts/railway.ts prod logs",
+    "railway:dev:seed": "node --import tsx ./scripts/seed-railway-dev-state.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",

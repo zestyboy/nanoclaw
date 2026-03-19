@@ -27,6 +27,10 @@ import {
   resolveGroupFolderPath,
 } from './group-folder.js';
 import { logger } from './logger.js';
+import {
+  assertPushChangesAllowed,
+  resolvePushChangesBranch,
+} from './push-changes-policy.js';
 import { scheduleQmdReindex } from './qmd-state.js';
 import { searchRecentNotes } from './recent-note-search.js';
 import { scheduleCanonicalSnapshot } from './state-backup.js';
@@ -949,6 +953,13 @@ async function handlePushChanges(
 ): Promise<void> {
   const githubToken = process.env.GITHUB_TOKEN;
   const githubRepo = process.env.GITHUB_REPO; // e.g., "owner/repo"
+  const resolvedBranch = resolvePushChangesBranch(data.branch);
+
+  assertPushChangesAllowed(data.createPr);
+  const request = {
+    ...data,
+    branch: resolvedBranch,
+  };
 
   if (IS_RAILWAY) {
     // Railway: use GitHub API to create commits (no local git repo)
@@ -957,10 +968,10 @@ async function handlePushChanges(
         'GITHUB_TOKEN and GITHUB_REPO env vars required for push_changes on Railway',
       );
     }
-    await pushViaGitHubApi(data, githubToken, githubRepo);
+    await pushViaGitHubApi(request, githubToken, githubRepo);
   } else {
     // Local: use git CLI directly
-    await pushViaGitCli(data);
+    await pushViaGitCli(request);
   }
 
   // Notify the main group
@@ -980,7 +991,7 @@ async function pushViaGitHubApi(
   data: {
     files: Array<{ path: string; content: string }>;
     commitMessage: string;
-    branch?: string;
+    branch: string;
     createPr?: boolean;
     prTitle?: string;
     prBody?: string;
@@ -988,7 +999,7 @@ async function pushViaGitHubApi(
   token: string,
   repo: string,
 ): Promise<void> {
-  const branch = data.branch || 'main';
+  const branch = data.branch;
   const apiBase = `https://api.github.com/repos/${repo}`;
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -1105,7 +1116,7 @@ async function pushViaGitHubApi(
 async function pushViaGitCli(data: {
   files: Array<{ path: string; content: string }>;
   commitMessage: string;
-  branch?: string;
+  branch: string;
 }): Promise<void> {
   const { execFileSync } = await import('child_process');
   const projectRoot = process.cwd();
@@ -1123,7 +1134,7 @@ async function pushViaGitCli(data: {
   execFileSync('git', ['commit', '-m', data.commitMessage], {
     cwd: projectRoot,
   });
-  const branch = data.branch || 'main';
+  const branch = data.branch;
   execFileSync('git', ['push', 'origin', branch], { cwd: projectRoot });
 
   logger.info(

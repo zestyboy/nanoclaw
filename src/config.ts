@@ -88,6 +88,11 @@ export const STATE_VERIFY_ENFORCE =
 export const FORCE_STATE_RESTORE =
   (process.env.FORCE_STATE_RESTORE || 'false') === 'true';
 export const R2_STATE_BUCKET = process.env.R2_STATE_BUCKET || '';
+export type PushChangesDirectMode = 'allow' | 'pr-only';
+export const PUSH_CHANGES_DEFAULT_BRANCH =
+  process.env.PUSH_CHANGES_DEFAULT_BRANCH || 'main';
+export const PUSH_CHANGES_DIRECT_MODE: PushChangesDirectMode =
+  process.env.PUSH_CHANGES_DIRECT_MODE === 'pr-only' ? 'pr-only' : 'allow';
 export const STATE_SNAPSHOT_INTERVAL_MS = parseInt(
   process.env.STATE_SNAPSHOT_INTERVAL_MS || '21600000',
   10,

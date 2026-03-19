@@ -168,9 +168,115 @@ Key files:
 - `src/db.ts` - SQLite operations (messages, groups, sessions, state)
 - `groups/*/CLAUDE.md` - Per-group memory
 
+## Railway Workflow
+
+NanoClaw uses one Railway project with two persistent environments:
+
+- `production`: live environment, auto-deployed from GitHub `main`
+- `dev`: development environment, deployed from your local checkout
+
+This keeps deployments, environment variables, volumes, bot tokens, Syncthing
+behavior, and scheduled task state isolated without splitting NanoClaw across
+multiple Railway projects.
+
+### Local target config
+
+Set these in your local shell or `.env` file:
+
+```bash
+RAILWAY_PROJECT_ID=<railway project id for the live NanoClaw project>
+RAILWAY_PROD_ENVIRONMENT=production
+RAILWAY_DEV_ENVIRONMENT=dev
+```
+
+Optional:
+
+```bash
+RAILWAY_SERVICE_NAME=nanoclaw
+PUSH_CHANGES_DEFAULT_BRANCH=main
+PUSH_CHANGES_DIRECT_MODE=allow
+```
+
+On the `dev` environment, set `PUSH_CHANGES_DIRECT_MODE=pr-only` in Railway so
+in-app `push_changes` requests cannot directly update `main`.
+
+Before the first real deploy to `dev`, configure at least one dev channel token
+for that environment. NanoClaw exits if no channels connect, so the `dev`
+environment cannot be seeded or validated end to end until a dev Discord or
+Telegram bot is configured there.
+
+### Daily feature workflow
+
+1. Create a local feature branch.
+2. Make changes locally.
+3. Deploy to dev with `npm run railway:dev:deploy`.
+4. Validate on the Railway `dev` environment.
+5. Iterate and redeploy to dev as needed.
+6. Open a PR to `main`.
+7. Merge to `main`.
+8. The Railway `production` environment auto-deploys from GitHub `main`.
+
+Promotion happens through Git merge, not by copying a deploy from dev into
+production.
+
+### Wrapper commands
+
+```bash
+npm run railway:dev:deploy
+npm run railway:dev:status -- --json
+npm run railway:dev:logs -- --lines 200
+npm run railway:prod:status -- --json
+npm run railway:prod:logs -- --lines 200
+```
+
+The wrappers always resolve an explicit project, environment, and service. They
+do not rely on the repo being linked to the correct Railway target. Dev deploys
+also refuse to run from `main` unless you pass `--allow-main`.
+
+### Seed dev from prod
+
+After the Railway `dev` environment exists, initialize it once with
+representative data from `production`:
+
+```bash
+npm run railway:dev:seed
+```
+
+Default seed scope:
+
+- `/data/groups`
+- `/data/projects`
+- `/data/public-knowledge`
+- `/data/second-brain`
+
+Optional:
+
+```bash
+node --import tsx ./scripts/seed-railway-dev-state.ts --include-state
+```
+
+Never seeded into dev:
+
+- `/data/sessions`
+- `/data/ipc`
+- `/data/store/messages.db`
+- `/data/syncthing`
+- logs
+- production auth/session state
+
+### Cleanup note
+
+If you created a temporary standalone `nanoclaw-dev` Railway project during the
+earlier two-project attempt, treat it as migration drift. Keep it only until
+the `dev` environment inside the live project is fully configured and verified,
+then retire it.
+
 ## Project Sync On Railway
 
-You can mirror NanoClaw project files from Railway to your laptop with Syncthing.
+You can mirror NanoClaw project files from Railway to your laptop with
+Syncthing. Production keeps the current Syncthing setup. Development starts
+with Syncthing disabled; add a separate dev peer only if needed later.
+
 Phase 1 intentionally syncs only `/data/projects`. It does not sync sessions,
 IPC, the SQLite database, or logs.
 
@@ -201,7 +307,7 @@ SYNCTHING_VERSIONING_DAYS=30
    - Ignore Permissions: enabled
    - File Versioning: `Staggered`
    - Version retention: `30` days
-4. Start the Railway service with `SYNCTHING_ENABLED=true`.
+4. Start the production Railway service with `SYNCTHING_ENABLED=true`.
 5. Read the Railway logs and copy the printed `Syncthing device ID`.
 6. Add the Railway device to your local Syncthing instance and share the
    `nanoclaw-projects` folder with it.
