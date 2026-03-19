@@ -28,6 +28,11 @@ import {
 } from './group-folder.js';
 import { logger } from './logger.js';
 import {
+  activateMirror,
+  deactivateMirror,
+  formatRetroactiveMessages,
+} from './mirror.js';
+import {
   assertPushChangesAllowed,
   resolvePushChangesBranch,
 } from './push-changes-policy.js';
@@ -245,6 +250,11 @@ export async function processTaskIpc(
     terms?: string[];
     start_date?: string;
     end_date?: string;
+    // For activate_mirror / deactivate_mirror
+    source_jid?: string;
+    target_jid?: string;
+    project_name?: string;
+    duration_minutes?: number;
     // For push_changes
     files?: Array<{ path: string; content: string }>;
     commitMessage?: string;
@@ -574,6 +584,12 @@ export async function processTaskIpc(
           break;
         }
 
+        // Embed source channel JID in the prompt so the target agent
+        // (e.g., Brain Router) can activate mirroring back to the source
+        const promptContent = data.source_jid
+          ? `<source_channel jid="${data.source_jid}" />\n\n${data.prompt}`
+          : data.prompt;
+
         // Store a synthetic message so the agent sees it as input
         const msgId = `router-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         storeMessage({
@@ -581,7 +597,7 @@ export async function processTaskIpc(
           chat_jid: targetJid,
           sender: 'router',
           sender_name: 'Router',
-          content: data.prompt,
+          content: promptContent,
           timestamp: new Date().toISOString(),
           is_from_me: true,
         });
@@ -892,6 +908,64 @@ export async function processTaskIpc(
         logger.warn({ data }, 'create_project: missing required fields');
       }
       break;
+
+    case 'activate_mirror': {
+      if (!hasElevatedPrivilege(isMain, isTrusted)) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized activate_mirror attempt blocked',
+        );
+        break;
+      }
+      if (data.source_jid && data.target_jid) {
+        const result = activateMirror(
+          data.source_jid,
+          data.target_jid,
+          data.project_name || 'Unknown Project',
+          data.duration_minutes,
+        );
+        if (result.activated && result.retroactive.length > 0) {
+          // Send retroactive messages as a single catch-up message
+          const catchUp = formatRetroactiveMessages(result.retroactive);
+          if (catchUp) {
+            try {
+              await deps.sendMessage(data.target_jid, catchUp);
+              logger.info(
+                {
+                  targetJid: data.target_jid,
+                  messageCount: result.retroactive.length,
+                },
+                'Sent retroactive mirror messages',
+              );
+            } catch (err) {
+              logger.warn(
+                { err, targetJid: data.target_jid },
+                'Failed to send retroactive mirror messages',
+              );
+            }
+          }
+        }
+      } else {
+        logger.warn({ data }, 'activate_mirror: missing source_jid or target_jid');
+      }
+      break;
+    }
+
+    case 'deactivate_mirror': {
+      if (!hasElevatedPrivilege(isMain, isTrusted)) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized deactivate_mirror attempt blocked',
+        );
+        break;
+      }
+      if (data.source_jid) {
+        deactivateMirror(data.source_jid, data.target_jid);
+      } else {
+        logger.warn({ data }, 'deactivate_mirror: missing source_jid');
+      }
+      break;
+    }
 
     case 'push_changes': {
       // Main-only: push code changes to GitHub

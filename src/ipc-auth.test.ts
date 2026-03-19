@@ -705,3 +705,86 @@ describe('register_group success', () => {
     expect(getRegisteredGroup('partial@g.us')).toBeUndefined();
   });
 });
+
+// --- activate_mirror authorization ---
+
+describe('activate_mirror authorization', () => {
+  it('elevated group (main) can activate a mirror', async () => {
+    // Should not throw
+    await processTaskIpc(
+      {
+        type: 'activate_mirror',
+        source_jid: 'main@g.us',
+        target_jid: 'other@g.us',
+        project_name: 'Test Project',
+        duration_minutes: 30,
+      },
+      'whatsapp_main',
+      true,
+      false,
+      deps,
+    );
+  });
+
+  it('elevated group (trusted) can activate a mirror', async () => {
+    await processTaskIpc(
+      {
+        type: 'activate_mirror',
+        source_jid: 'main@g.us',
+        target_jid: 'other@g.us',
+        project_name: 'Test Project',
+      },
+      'brain-router',
+      false,
+      true,
+      deps,
+    );
+  });
+
+  it('non-elevated group cannot activate a mirror', async () => {
+    // Should be silently blocked
+    await processTaskIpc(
+      {
+        type: 'activate_mirror',
+        source_jid: 'main@g.us',
+        target_jid: 'other@g.us',
+        project_name: 'Test Project',
+      },
+      'other-group',
+      false,
+      false,
+      deps,
+    );
+  });
+});
+
+// --- deactivate_mirror authorization ---
+
+describe('deactivate_mirror authorization', () => {
+  it('elevated group can deactivate a mirror', async () => {
+    await processTaskIpc(
+      {
+        type: 'deactivate_mirror',
+        source_jid: 'main@g.us',
+        target_jid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      false,
+      deps,
+    );
+  });
+
+  it('non-elevated group cannot deactivate a mirror', async () => {
+    await processTaskIpc(
+      {
+        type: 'deactivate_mirror',
+        source_jid: 'main@g.us',
+      },
+      'other-group',
+      false,
+      false,
+      deps,
+    );
+  });
+});

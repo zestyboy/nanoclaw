@@ -358,6 +358,7 @@ server.tool(
       type: 'execute_in_group',
       target_group_folder: args.target_group_folder,
       prompt: args.prompt,
+      source_jid: chatJid,
       timestamp: new Date().toISOString(),
     };
 
@@ -365,6 +366,46 @@ server.tool(
 
     return {
       content: [{ type: 'text' as const, text: `Execution request sent to group "${args.target_group_folder}".` }],
+    };
+  },
+);
+
+server.tool(
+  'activate_mirror',
+  `Activate message mirroring from a source channel to a target project channel. Elevated groups only.
+
+When activated, all messages (both user and bot) sent in the source channel will also appear in the target project channel. This provides conversation context in the project channel when users discuss project topics in #personal-assistant.
+
+The mirror auto-expires after the specified duration (default 30 minutes). If activated again for the same source→target pair, the expiry is refreshed.
+
+Any retroactive messages from the last 5 minutes are automatically sent to the target channel as a catch-up summary.`,
+  {
+    source_jid: z.string().describe('JID of the source channel to mirror FROM (e.g., the PA channel JID from <source_channel> tag)'),
+    target_jid: z.string().describe('JID of the target channel to mirror TO (e.g., "dc:{discord_channel_id}" from projects.yaml)'),
+    project_name: z.string().describe('Display name of the project (for formatting)'),
+    duration_minutes: z.number().optional().describe('How long the mirror stays active (default: 30 minutes)'),
+  },
+  async (args) => {
+    if (!hasElevatedPrivilege()) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only elevated groups can activate mirrors.' }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'activate_mirror',
+      source_jid: args.source_jid,
+      target_jid: args.target_jid,
+      project_name: args.project_name,
+      duration_minutes: args.duration_minutes || 30,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Mirror activated: messages in ${args.source_jid} will also appear in ${args.target_jid} for ${args.duration_minutes || 30} minutes.` }],
     };
   },
 );

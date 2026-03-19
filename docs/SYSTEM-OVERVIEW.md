@@ -73,6 +73,7 @@ Think of it as: you text a thought to your PA. If it's a quick task, the PA hand
 | `src/db.ts` | SQLite: messages, chats, sessions, groups, tasks |
 | `src/mount-security.ts` | Validates additional mounts against allowlist |
 | `src/credential-proxy.ts` | HTTP proxy that injects API keys without exposing them to containers |
+| `src/mirror.ts` | Message mirroring state: activate/deactivate, ring buffer, retroactive lookback |
 | `src/push-changes-policy.ts` | Push-changes branch resolution and pr-only enforcement |
 | `container/agent-runner/src/index.ts` | Agent entry point inside containers |
 | `container/agent-runner/src/ipc-mcp-stdio.ts` | MCP tools available to agents (schedule, send, search, execute, create project) |
@@ -738,6 +739,8 @@ Agents communicate with the host via filesystem IPC. The agent writes a JSON tas
 | `search_second_brain` | Any group | Search second brain vault via qmd |
 | `reindex_public_knowledge` | Elevated only | Trigger qmd reindex (fire-and-forget) |
 | `reindex_second_brain` | Elevated only | Trigger qmd reindex (fire-and-forget) |
+| `activate_mirror` | Elevated only | Mirror messages from one channel to another (e.g., PA → project channel) |
+| `deactivate_mirror` | Elevated only | Stop mirroring messages for a source channel |
 | `push_changes` | Main only | Push code changes to GitHub repo (subject to push-changes policy) |
 
 **Elevated** = `isMain` or `trusted`. **Main only** = `isMain` exclusively.
@@ -749,6 +752,31 @@ The `push_changes` IPC operation is gated by `src/push-changes-policy.ts`:
 1. **Branch resolution:** If the request omits a branch, the host uses `PUSH_CHANGES_DEFAULT_BRANCH` (defaults to `main`).
 2. **Direct-mode enforcement:** On Railway, if `PUSH_CHANGES_DIRECT_MODE=pr-only`, the host rejects any `push_changes` request that does not set `create_pr=true`. This prevents the dev environment from pushing directly to `main`.
 3. **Local passthrough:** Outside Railway (or when `PUSH_CHANGES_DIRECT_MODE=allow`), direct pushes are permitted as before.
+
+### Message Mirroring
+
+When users discuss projects in #personal-assistant, the conversation stays there — the project's Discord channel has no record. Message mirroring solves this by duplicating messages from a source channel (e.g., PA) to a target project channel.
+
+**How it works:**
+
+1. PA delegates to Brain Router via `execute_in_group`, which now includes `source_jid` metadata
+2. Brain Router identifies the project and calls `activate_mirror(source_jid, target_jid, project_name)`
+3. Host stores the mirror mapping in memory (auto-expires after 30 minutes)
+4. All subsequent messages — both user messages and bot responses — in the source channel are also sent to the project channel
+5. Any recent messages from the last 5 minutes are retroactively sent as a catch-up summary
+
+**What gets mirrored:**
+- User messages: appear as `**Username**: message text`
+- Bot responses: appear as-is (sent by the bot in both channels)
+
+**Key behaviors:**
+- Mirrors auto-expire after 30 minutes (refreshed on each Brain Router interaction)
+- Max 3 mirrors per source channel
+- Loop prevention: bidirectional mirrors are rejected
+- Lost on restart (by design — next Brain Router interaction re-activates)
+- Retroactive lookback uses an in-memory ring buffer (last 50 messages, up to 5 minutes)
+
+**Implementation:** `src/mirror.ts` (state management), `src/ipc.ts` (IPC handlers), `src/index.ts` (outbound hooks)
 
 ### IPC Flow (execute_in_group example)
 
