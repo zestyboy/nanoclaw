@@ -14,6 +14,7 @@
  *   Final marker after loop ends signals completion.
  */
 
+import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
@@ -277,18 +278,66 @@ function shouldClose(): boolean {
 }
 
 /**
- * Drain all pending IPC input messages.
+ * Process a control command from the host.
+ * Returns a user-visible message to inject into the stream, or null.
+ */
+function processControlCommand(cmd: { type: string; steps?: number }): string | null {
+  if (cmd.type === 'rewind') {
+    const cwdDir = process.env.NANOCLAW_WORKSPACE_GROUP || '/workspace/group';
+    try {
+      // Check if it's a git repo with uncommitted changes
+      const status = execSync('git status --porcelain', { cwd: cwdDir, timeout: 5000 }).toString().trim();
+      if (!status) {
+        log('Rewind: no uncommitted changes to revert');
+        return '[System: No uncommitted file changes to revert.]';
+      }
+      // Revert all uncommitted file changes
+      execSync('git checkout .', { cwd: cwdDir, timeout: 5000 });
+      // Clean untracked files created by the agent
+      execSync('git clean -fd', { cwd: cwdDir, timeout: 5000 });
+      log(`Rewind: reverted file changes in ${cwdDir}`);
+      return '[System: File changes have been reverted to the last committed state.]';
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Rewind failed: ${msg}`);
+      // If not a git repo, try to inform the user
+      return `[System: Rewind failed — ${msg}]`;
+    }
+  }
+  log(`Unknown control command: ${cmd.type}`);
+  return null;
+}
+
+/**
+ * Drain all pending IPC input messages and control commands.
+ * Control files (_control-*.json) are processed first.
  * Returns messages found, or empty array.
  */
 function drainIpcInput(): string[] {
   try {
     fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
-    const files = fs.readdirSync(IPC_INPUT_DIR)
-      .filter(f => f.endsWith('.json'))
-      .sort();
+    const allFiles = fs.readdirSync(IPC_INPUT_DIR).sort();
+
+    // Process control files first
+    const controlFiles = allFiles.filter(f => f.startsWith('_control-') && f.endsWith('.json'));
+    const messageFiles = allFiles.filter(f => !f.startsWith('_control-') && !f.startsWith('_') && f.endsWith('.json'));
 
     const messages: string[] = [];
-    for (const file of files) {
+
+    for (const file of controlFiles) {
+      const filePath = path.join(IPC_INPUT_DIR, file);
+      try {
+        const cmd = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        fs.unlinkSync(filePath);
+        const result = processControlCommand(cmd);
+        if (result) messages.push(result);
+      } catch (err) {
+        log(`Failed to process control file ${file}: ${err instanceof Error ? err.message : String(err)}`);
+        try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+      }
+    }
+
+    for (const file of messageFiles) {
       const filePath = path.join(IPC_INPUT_DIR, file);
       try {
         const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));

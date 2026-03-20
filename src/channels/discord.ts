@@ -536,6 +536,9 @@ export class DiscordChannel implements Channel {
             .setRequired(false),
         ),
       new SlashCommandBuilder()
+        .setName('rewind')
+        .setDescription('Undo agent file changes (revert to last commit)'),
+      new SlashCommandBuilder()
         .setName('catalog')
         .setDescription('Catalog information to a project')
         .addStringOption((opt) =>

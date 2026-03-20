@@ -468,13 +468,19 @@ async function runAgent(
         if (output.newSessionId) {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
-          recordSessionHistory(group.folder, output.newSessionId, prompt.slice(0, 200));
+          recordSessionHistory(
+            group.folder,
+            output.newSessionId,
+            prompt.slice(0, 200),
+          );
         }
         if (output.totalCostUsd != null || output.usage) {
           const cost = sessionCosts[group.folder] || { tokens: 0, cost: 0 };
           if (output.totalCostUsd != null) cost.cost = output.totalCostUsd;
           if (output.usage) {
-            cost.tokens += (output.usage.input_tokens || 0) + (output.usage.output_tokens || 0);
+            cost.tokens +=
+              (output.usage.input_tokens || 0) +
+              (output.usage.output_tokens || 0);
           }
           sessionCosts[group.folder] = cost;
         }
@@ -822,7 +828,10 @@ async function main(): Promise<void> {
         respond('Reloading. Send a message to continue.').catch((err) =>
           logger.warn({ chatJid, err }, 'Failed to respond to /reload'),
         );
-        logger.info({ group: group.name }, 'Reload triggered via slash command');
+        logger.info(
+          { group: group.name },
+          'Reload triggered via slash command',
+        );
         return;
       }
 
@@ -865,10 +874,7 @@ async function main(): Promise<void> {
             respond('No conversations archived yet.').catch(() => {});
             return;
           }
-          const latest = fs.readFileSync(
-            path.join(convDir, files[0]),
-            'utf-8',
-          );
+          const latest = fs.readFileSync(path.join(convDir, files[0]), 'utf-8');
           // Truncate for Discord's 2000 char limit on ephemeral replies
           const truncated =
             latest.length > 1900
@@ -929,7 +935,10 @@ async function main(): Promise<void> {
           const activeSessionId = sessions[group.folder];
           const lines = history.map((h, i) => {
             const active = h.session_id === activeSessionId ? ' ← active' : '';
-            const name = h.name || h.first_prompt?.slice(0, 40) || h.session_id.slice(0, 8);
+            const name =
+              h.name ||
+              h.first_prompt?.slice(0, 40) ||
+              h.session_id.slice(0, 8);
             const date = h.last_used.split('T')[0];
             return `${i + 1}. **${name}** (${date})${active}`;
           });
@@ -939,7 +948,7 @@ async function main(): Promise<void> {
         // Switch to session by number or name
         const history = getSessionHistory(group.folder);
         const idx = parseInt(args.trim(), 10);
-        let target: typeof history[0] | undefined;
+        let target: (typeof history)[0] | undefined;
         if (!isNaN(idx) && idx >= 1 && idx <= history.length) {
           target = history[idx - 1];
         } else {
@@ -987,6 +996,25 @@ async function main(): Promise<void> {
           { group: group.name, effort: level },
           'Effort level changed',
         );
+        return;
+      }
+
+      // --- Phase 3: File rewind ---
+
+      if (command === 'rewind') {
+        const sent = queue.sendControl(chatJid, { type: 'rewind' });
+        if (sent) {
+          respond('Reverting file changes...').catch(() => {});
+        } else {
+          // No active container — rewind directly on host
+          const groupPath = path.join(GROUPS_DIR, group.folder);
+          execAsync(`git -C "${groupPath}" checkout . && git -C "${groupPath}" clean -fd`, {
+            timeout: 5000,
+          })
+            .then(() => respond('File changes reverted.'))
+            .catch(() => respond('No active session or not a git repository.'))
+            .catch(() => {});
+        }
         return;
       }
 

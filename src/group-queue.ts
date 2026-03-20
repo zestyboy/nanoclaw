@@ -179,6 +179,28 @@ export class GroupQueue {
   }
 
   /**
+   * Send a control command to the active container via IPC.
+   * Control files are prefixed with _control- and processed before regular messages.
+   */
+  sendControl(groupJid: string, command: object): boolean {
+    const state = this.getGroup(groupJid);
+    if (!state.active || !state.groupFolder) return false;
+
+    const inputDir = path.join(resolveGroupIpcPath(state.groupFolder), 'input');
+    try {
+      fs.mkdirSync(inputDir, { recursive: true });
+      const filename = `_control-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
+      const filepath = path.join(inputDir, filename);
+      const tempPath = `${filepath}.tmp`;
+      fs.writeFileSync(tempPath, JSON.stringify(command));
+      fs.renameSync(tempPath, filepath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Signal the active container to wind down by writing a close sentinel.
    */
   closeStdin(groupJid: string): void {
