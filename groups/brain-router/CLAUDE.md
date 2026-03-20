@@ -76,7 +76,7 @@ Strip the prefix before processing the rest of the message. Project matching sti
 
 ## Catalog Mode
 
-Write a timestamped entry to `/workspace/projects/{slug}/notes.md` (where `slug` is the project's slug from projects.yaml):
+Write a timestamped entry to the matched project's `notes.md` file:
 
 ```
 [YYYY-MM-DD HH:MM]
@@ -91,6 +91,10 @@ Create the file if it doesn't exist. Adapt format to project type:
 
 After cataloging, confirm with a channel link:
 "Cataloged in **[project-name]** -> <#DISCORD_CHANNEL_ID>"
+
+If the incoming message includes staged attachment paths like:
+`[File: name.ext] Staged at .../attachments/...`
+that path is a temporary staging location, not the final home. Use the staged path exactly as provided in the message. If the user wants those files added to the project, you MUST move them into the target project's `attachments/` directory before confirming. Preserve filenames when practical, avoid overwriting by renaming on collision, and mention the destination path in your confirmation. After moving, leave a symlink at the original staging path pointing to the final project location so the original chat reference remains valid without duplicating the file contents.
 
 ## Execute Mode
 

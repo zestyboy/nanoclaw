@@ -1,4 +1,8 @@
+import fs from 'fs';
+import path from 'path';
+
 import {
+  Attachment,
   ChannelType,
   Client,
   Events,
@@ -11,8 +15,9 @@ import {
   TextChannel,
 } from 'discord.js';
 
-import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
+import { ASSISTANT_NAME, IS_RAILWAY, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
+import { resolveGroupFolderPath } from '../group-folder.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts, OnSlashCommand } from './registry.js';
 import {
@@ -28,6 +33,138 @@ export interface DiscordChannelOpts {
   onChatMetadata: OnChatMetadata;
   onSlashCommand: OnSlashCommand;
   registeredGroups: () => Record<string, RegisteredGroup>;
+}
+
+function describeAttachment(att: Attachment): string {
+  const contentType = att.contentType || '';
+  if (contentType.startsWith('image/')) {
+    return 'Image';
+  }
+  if (contentType.startsWith('video/')) {
+    return 'Video';
+  }
+  if (contentType.startsWith('audio/')) {
+    return 'Audio';
+  }
+  return 'File';
+}
+
+function sanitizeAttachmentName(
+  name: string | null | undefined,
+  index: number,
+): string {
+  const fallback = `attachment-${index + 1}`;
+  const baseName = path.basename(name?.trim() || fallback);
+  const sanitized = baseName
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return sanitized || fallback;
+}
+
+function ensureUniqueFilename(filename: string, seen: Set<string>): string {
+  if (!seen.has(filename)) {
+    seen.add(filename);
+    return filename;
+  }
+
+  const parsed = path.parse(filename);
+  let suffix = 2;
+  while (true) {
+    const candidate = `${parsed.name}-${suffix}${parsed.ext}`;
+    if (!seen.has(candidate)) {
+      seen.add(candidate);
+      return candidate;
+    }
+    suffix += 1;
+  }
+}
+
+function toWorkspacePath(relativePath: string, groupFolder?: string): string {
+  const basePath =
+    IS_RAILWAY && groupFolder
+      ? resolveGroupFolderPath(groupFolder)
+      : '/workspace/group';
+  return path.posix.join(basePath, relativePath.split(path.sep).join('/'));
+}
+
+async function downloadAttachments(
+  message: Message,
+  groupFolder: string,
+): Promise<string[]> {
+  const groupDir = resolveGroupFolderPath(groupFolder);
+  const attachmentDir = path.join(
+    'attachments',
+    `${message.createdAt.toISOString().replace(/[:.]/g, '-')}-${message.id}`,
+  );
+  const hostAttachmentDir = path.join(groupDir, attachmentDir);
+  fs.mkdirSync(hostAttachmentDir, { recursive: true });
+
+  const seenFilenames = new Set<string>();
+  const descriptions: string[] = [];
+  let index = 0;
+
+  for (const att of message.attachments.values()) {
+    const attachmentType = describeAttachment(att);
+    const filename = ensureUniqueFilename(
+      sanitizeAttachmentName(att.name, index),
+      seenFilenames,
+    );
+    index += 1;
+
+    if (!att.url) {
+      descriptions.push(`[${attachmentType}: ${filename}]`);
+      continue;
+    }
+
+    try {
+      const response = await fetch(att.url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const relativeFilePath = path.join(attachmentDir, filename);
+      const hostFilePath = path.join(groupDir, relativeFilePath);
+      fs.writeFileSync(hostFilePath, buffer);
+
+      descriptions.push(
+        `[${attachmentType}: ${filename}] Staged at ${toWorkspacePath(relativeFilePath, groupFolder)}`,
+      );
+      logger.info(
+        {
+          groupFolder,
+          messageId: message.id,
+          attachmentName: filename,
+          size: buffer.length,
+        },
+        'Discord attachment downloaded',
+      );
+    } catch (err) {
+      descriptions.push(`[${attachmentType}: ${filename}] Download failed`);
+      logger.warn(
+        {
+          err,
+          groupFolder,
+          messageId: message.id,
+          attachmentName: filename,
+          url: att.url,
+        },
+        'Failed to download Discord attachment',
+      );
+    }
+  }
+
+  return descriptions;
+}
+
+function isUnknownDiscordMessageError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const candidate = err as { code?: number; message?: string };
+  return (
+    candidate.code === 10008 ||
+    candidate.message?.includes('Unknown Message') === true
+  );
 }
 
 export class DiscordChannel implements Channel {
@@ -99,29 +236,6 @@ export class DiscordChannel implements Channel {
         }
       }
 
-      // Handle attachments — store placeholders so the agent knows something was sent
-      if (message.attachments.size > 0) {
-        const attachmentDescriptions = [...message.attachments.values()].map(
-          (att) => {
-            const contentType = att.contentType || '';
-            if (contentType.startsWith('image/')) {
-              return `[Image: ${att.name || 'image'}]`;
-            } else if (contentType.startsWith('video/')) {
-              return `[Video: ${att.name || 'video'}]`;
-            } else if (contentType.startsWith('audio/')) {
-              return `[Audio: ${att.name || 'audio'}]`;
-            } else {
-              return `[File: ${att.name || 'file'}]`;
-            }
-          },
-        );
-        if (content) {
-          content = `${content}\n${attachmentDescriptions.join('\n')}`;
-        } else {
-          content = attachmentDescriptions.join('\n');
-        }
-      }
-
       // Handle reply context — include who the user is replying to
       if (message.reference?.messageId) {
         try {
@@ -156,6 +270,18 @@ export class DiscordChannel implements Channel {
           'Message from unregistered Discord channel',
         );
         return;
+      }
+
+      if (message.attachments.size > 0) {
+        const attachmentDescriptions = await downloadAttachments(
+          message,
+          group.folder,
+        );
+        if (content) {
+          content = `${content}\n${attachmentDescriptions.join('\n')}`;
+        } else {
+          content = attachmentDescriptions.join('\n');
+        }
       }
 
       // Deliver message — startMessageLoop() will pick it up
@@ -275,6 +401,39 @@ export class DiscordChannel implements Channel {
       logger.info({ jid, length: text.length }, 'Discord message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Discord message');
+    }
+  }
+
+  async deleteMessage(
+    jid: string,
+    messageId: string,
+  ): Promise<'deleted' | 'not_found'> {
+    if (!this.client) {
+      logger.warn('Discord client not initialized');
+      return 'not_found';
+    }
+
+    try {
+      const channelId = jid.replace(/^dc:/, '');
+      const channel = await this.client.channels.fetch(channelId);
+
+      if (!channel || !('messages' in channel)) {
+        logger.warn({ jid, messageId }, 'Discord channel not found');
+        return 'not_found';
+      }
+
+      const textChannel = channel as TextChannel;
+      const message = await textChannel.messages.fetch(messageId);
+      await message.delete();
+      logger.info({ jid, messageId }, 'Discord message deleted');
+      return 'deleted';
+    } catch (err) {
+      if (isUnknownDiscordMessageError(err)) {
+        logger.warn({ jid, messageId }, 'Discord message not found');
+        return 'not_found';
+      }
+      logger.error({ jid, messageId, err }, 'Failed to delete Discord message');
+      throw err;
     }
   }
 

@@ -371,6 +371,62 @@ server.tool(
 );
 
 server.tool(
+  'delete_discord_message',
+  `Delete a Discord message by its source message ID. Use this when the user asks you to remove a prior upload or sensitive attachment message from Discord. The message IDs are available in the conversation context as <message id="...">. By default this deletes in the current Discord chat. Elevated groups may target another Discord chat by passing target_jid.`,
+  {
+    message_id: z.string().describe('The Discord source message ID to delete. Use the id from the relevant <message ...> context entry.'),
+    target_jid: z.string().optional().describe('Optional Discord chat JID like "dc:123...". Defaults to the current chat.'),
+  },
+  async (args) => {
+    const targetJid = args.target_jid || chatJid;
+    const resultId = `delete-discord-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const data = {
+      type: 'delete_discord_message',
+      target_jid: targetJid,
+      message_id: args.message_id,
+      resultId,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    const resultPath = path.join(IPC_DIR, 'input', `result-${resultId}.json`);
+    const maxWait = 15000;
+    const pollInterval = 200;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      if (fs.existsSync(resultPath)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(resultPath, 'utf-8'));
+          fs.unlinkSync(resultPath);
+          if (result.success) {
+            return {
+              content: [{ type: 'text' as const, text: result.message }],
+            };
+          }
+          return {
+            content: [{ type: 'text' as const, text: result.error || 'Discord message deletion failed.' }],
+            isError: true,
+          };
+        } catch (err) {
+          return {
+            content: [{ type: 'text' as const, text: `Error reading deletion result: ${err}` }],
+            isError: true,
+          };
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: 'Discord message deletion timed out.' }],
+      isError: true,
+    };
+  },
+);
+
+server.tool(
   'activate_mirror',
   `Activate message mirroring from a source channel to a target project channel. Elevated groups only.
 

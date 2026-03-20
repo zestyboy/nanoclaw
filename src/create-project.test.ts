@@ -12,7 +12,9 @@ describe('create_project registry ownership', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-create-project-'));
+    tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'nanoclaw-create-project-'),
+    );
     originalCwd = process.cwd();
     originalEnv = { ...process.env };
 
@@ -109,7 +111,12 @@ describe('create_project registry ownership', () => {
     expect(brainRouterProjectsYaml).toContain('test-mirroring');
     expect(brainRouterProjectsYaml).toContain('1234567890');
 
-    const mainProjectsYamlPath = path.join(tempDir, 'groups', 'main', 'projects.yaml');
+    const mainProjectsYamlPath = path.join(
+      tempDir,
+      'groups',
+      'main',
+      'projects.yaml',
+    );
     expect(fs.existsSync(mainProjectsYamlPath)).toBe(false);
 
     const claudeFile = fs.readFileSync(
