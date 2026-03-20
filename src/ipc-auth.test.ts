@@ -39,10 +39,12 @@ const THIRD_GROUP: RegisteredGroup = {
 let groups: Record<string, RegisteredGroup>;
 let deps: IpcDeps;
 let enqueuedJids: string[];
+let deletedDiscordMessages: Array<{ jid: string; messageId: string }>;
 
 beforeEach(() => {
   _initTestDatabase();
   enqueuedJids = [];
+  deletedDiscordMessages = [];
 
   groups = {
     'main@g.us': MAIN_GROUP,
@@ -57,6 +59,10 @@ beforeEach(() => {
 
   deps = {
     sendMessage: async () => {},
+    deleteDiscordMessage: async (jid, messageId) => {
+      deletedDiscordMessages.push({ jid, messageId });
+      return 'deleted';
+    },
     registeredGroups: () => groups,
     registerGroup: (jid, group) => {
       groups[jid] = group;
@@ -70,6 +76,73 @@ beforeEach(() => {
       enqueuedJids.push(jid);
     },
   };
+});
+
+// --- delete_discord_message authorization ---
+
+describe('delete_discord_message authorization', () => {
+  beforeEach(() => {
+    const discordGroup: RegisteredGroup = {
+      name: 'Discord Project',
+      folder: 'project:discord-project',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+    };
+    groups['dc:222'] = discordGroup;
+    setRegisteredGroup('dc:222', discordGroup);
+  });
+
+  it('non-elevated group can delete in its own Discord chat', async () => {
+    await processTaskIpc(
+      {
+        type: 'delete_discord_message',
+        target_jid: 'dc:222',
+        message_id: '12345',
+      },
+      'project:discord-project',
+      false,
+      false,
+      deps,
+    );
+
+    expect(deletedDiscordMessages).toEqual([
+      { jid: 'dc:222', messageId: '12345' },
+    ]);
+  });
+
+  it('non-elevated group cannot delete in another groups Discord chat', async () => {
+    await processTaskIpc(
+      {
+        type: 'delete_discord_message',
+        target_jid: 'dc:222',
+        message_id: '12345',
+      },
+      'other-group',
+      false,
+      false,
+      deps,
+    );
+
+    expect(deletedDiscordMessages).toEqual([]);
+  });
+
+  it('main group can delete in another Discord chat', async () => {
+    await processTaskIpc(
+      {
+        type: 'delete_discord_message',
+        target_jid: 'dc:222',
+        message_id: '12345',
+      },
+      'whatsapp_main',
+      true,
+      false,
+      deps,
+    );
+
+    expect(deletedDiscordMessages).toEqual([
+      { jid: 'dc:222', messageId: '12345' },
+    ]);
+  });
 });
 
 // --- schedule_task authorization ---

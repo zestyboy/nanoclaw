@@ -63,7 +63,7 @@ describe('formatMessages', () => {
   it('formats a single message as XML with context header', () => {
     const result = formatMessages([makeMsg()], TZ);
     expect(result).toContain('<context timezone="UTC" />');
-    expect(result).toContain('<message sender="Alice"');
+    expect(result).toContain('<message id="1" sender="Alice"');
     expect(result).toContain('>hello</message>');
     expect(result).toContain('Jan 1, 2024');
   });
@@ -84,6 +84,8 @@ describe('formatMessages', () => {
       }),
     ];
     const result = formatMessages(msgs, TZ);
+    expect(result).toContain('id="1"');
+    expect(result).toContain('id="2"');
     expect(result).toContain('sender="Alice"');
     expect(result).toContain('sender="Bob"');
     expect(result).toContain('>hi</message>');

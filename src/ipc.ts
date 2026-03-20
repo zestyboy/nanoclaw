@@ -44,6 +44,10 @@ import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  deleteDiscordMessage?: (
+    jid: string,
+    messageId: string,
+  ) => Promise<'deleted' | 'not_found'>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -289,6 +293,7 @@ export async function processTaskIpc(
     target_jid?: string;
     project_name?: string;
     duration_minutes?: number;
+    message_id?: string;
     // For push_changes
     files?: Array<{ path: string; content: string }>;
     commitMessage?: string;
@@ -655,6 +660,93 @@ export async function processTaskIpc(
         );
       }
       break;
+
+    case 'delete_discord_message': {
+      if (!data.target_jid || !data.message_id) {
+        logger.warn({ data }, 'delete_discord_message: missing target_jid or message_id');
+        break;
+      }
+      if (!data.target_jid.startsWith('dc:')) {
+        logger.warn(
+          { sourceGroup, targetJid: data.target_jid },
+          'delete_discord_message: target is not a Discord chat',
+        );
+        break;
+      }
+      const targetGroup = registeredGroups[data.target_jid];
+      if (!targetGroup) {
+        logger.warn(
+          { sourceGroup, targetJid: data.target_jid },
+          'delete_discord_message: target group not found',
+        );
+        break;
+      }
+      if (
+        !hasElevatedPrivilege(isMain, isTrusted) &&
+        targetGroup.folder !== sourceGroup
+      ) {
+        logger.warn(
+          { sourceGroup, targetJid: data.target_jid },
+          'Unauthorized delete_discord_message attempt blocked',
+        );
+        break;
+      }
+      if (!deps.deleteDiscordMessage) {
+        logger.warn('delete_discord_message: Discord channel not available');
+        break;
+      }
+
+      const resultDir = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup.replace(/:/g, '_'),
+        'input',
+      );
+      fs.mkdirSync(resultDir, { recursive: true });
+      const resultFileName = data.resultId
+        ? `result-${data.resultId}.json`
+        : `result-${Date.now()}.json`;
+
+      try {
+        const status = await deps.deleteDiscordMessage(
+          data.target_jid,
+          data.message_id,
+        );
+        fs.writeFileSync(
+          path.join(resultDir, resultFileName),
+          JSON.stringify({
+            success: true,
+            status,
+            message: status === 'deleted'
+              ? `Deleted Discord message ${data.message_id}.`
+              : `Discord message ${data.message_id} was not found.`,
+          }),
+        );
+        logger.info(
+          {
+            sourceGroup,
+            targetJid: data.target_jid,
+            messageId: data.message_id,
+            status,
+          },
+          'delete_discord_message processed',
+        );
+      } catch (err) {
+        fs.writeFileSync(
+          path.join(resultDir, resultFileName),
+          JSON.stringify({
+            success: false,
+            error:
+              err instanceof Error ? err.message : 'Discord message deletion failed',
+          }),
+        );
+        logger.error(
+          { err, sourceGroup, targetJid: data.target_jid, messageId: data.message_id },
+          'delete_discord_message failed',
+        );
+      }
+      break;
+    }
 
     case 'search_public_knowledge': {
       const {

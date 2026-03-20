@@ -824,6 +824,10 @@ async function main(): Promise<void> {
 
   startIpcWatcher({
     sendMessage: (jid, text) => sendWithMirror(jid, text),
+    deleteDiscordMessage: discordChannel
+      ? (jid: string, messageId: string) =>
+          discordChannel.deleteMessage(jid, messageId)
+      : undefined,
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroups: async (force: boolean) => {

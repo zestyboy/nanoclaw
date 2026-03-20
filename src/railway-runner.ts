@@ -13,12 +13,14 @@ import {
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
   PUBLIC_KNOWLEDGE_DIR,
+  PROJECTS_DIR,
   RAILWAY_DATA_DIR,
   SECOND_BRAIN_DIR,
   TIMEZONE,
 } from './config.js';
 import { ContainerInput, ContainerOutput } from './container-runner.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { isProjectFolder, projectSlug } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -40,7 +42,9 @@ function prepareWorkspaceDirs(
   env: Record<string, string>;
 } {
   const dataDir = RAILWAY_DATA_DIR;
-  const groupDir = path.join(dataDir, 'groups', group.folder);
+  const groupDir = isProjectFolder(group.folder)
+    ? path.join(PROJECTS_DIR, projectSlug(group.folder))
+    : path.join(dataDir, 'groups', group.folder);
   const globalDir = path.join(dataDir, 'groups', 'global');
   const fsName = group.folder.replace(/:/g, '_');
   const sessionDir = path.join(dataDir, 'sessions', fsName);

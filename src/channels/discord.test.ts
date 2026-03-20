@@ -1,6 +1,12 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 // --- Mocks ---
+
+const groupDirRef = vi.hoisted(() => ({ current: '' }));
 
 // Mock registry (registerChannel runs at import time)
 vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
@@ -8,9 +14,14 @@ vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
 // Mock env reader (used by the factory, not needed in unit tests)
 vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 
+vi.mock('../group-folder.js', () => ({
+  resolveGroupFolderPath: vi.fn(() => groupDirRef.current),
+}));
+
 // Mock config
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
+  IS_RAILWAY: false,
   TRIGGER_PATTERN: /^@Andy\b/i,
 }));
 
@@ -88,6 +99,11 @@ vi.mock('discord.js', () => {
       fetch: vi.fn().mockResolvedValue({
         send: vi.fn().mockResolvedValue(undefined),
         sendTyping: vi.fn().mockResolvedValue(undefined),
+        messages: {
+          fetch: vi.fn().mockResolvedValue({
+            delete: vi.fn().mockResolvedValue(undefined),
+          }),
+        },
       }),
     };
 
@@ -235,6 +251,30 @@ function currentClient() {
   return clientRef.current;
 }
 
+function attachmentWorkspacePath(filename: string, messageId = 'msg_001') {
+  return `/workspace/group/attachments/2024-01-01T00-00-00-000Z-${messageId}/${filename}`;
+}
+
+function attachmentHostPath(filename: string, messageId = 'msg_001') {
+  return path.join(
+    groupDirRef.current,
+    'attachments',
+    `2024-01-01T00-00-00-000Z-${messageId}`,
+    filename,
+  );
+}
+
+function mockFetchSuccess(body: string) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => Buffer.from(body),
+    }),
+  );
+}
+
 async function triggerMessage(message: any) {
   const handlers = currentClient().eventHandlers.get('messageCreate') || [];
   for (const h of handlers) await h(message);
@@ -275,9 +315,17 @@ async function triggerInteraction(interaction: any) {
 describe('DiscordChannel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    groupDirRef.current = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'nanoclaw-discord-test-'),
+    );
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
+    if (groupDirRef.current) {
+      fs.rmSync(groupDirRef.current, { recursive: true, force: true });
+      groupDirRef.current = '';
+    }
     vi.restoreAllMocks();
   });
 
@@ -570,13 +618,21 @@ describe('DiscordChannel', () => {
   // --- Attachments ---
 
   describe('attachments', () => {
-    it('stores image attachment with placeholder', async () => {
+    it('downloads image attachment into the group workspace', async () => {
       const opts = createTestOpts();
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
+      mockFetchSuccess('image-bytes');
 
       const attachments = new Map([
-        ['att1', { name: 'photo.png', contentType: 'image/png' }],
+        [
+          'att1',
+          {
+            name: 'photo.png',
+            contentType: 'image/png',
+            url: 'https://cdn.example/photo.png',
+          },
+        ],
       ]);
       const msg = createMessage({
         content: '',
@@ -588,18 +644,36 @@ describe('DiscordChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'dc:1234567890123456',
         expect.objectContaining({
-          content: '[Image: photo.png]',
+          content: `[Image: photo.png] Staged at ${attachmentWorkspacePath('photo.png')}`,
         }),
+      );
+      expect(fs.readFileSync(attachmentHostPath('photo.png'), 'utf8')).toBe(
+        'image-bytes',
       );
     });
 
-    it('stores video attachment with placeholder', async () => {
+    it('marks download failures in the stored message', async () => {
       const opts = createTestOpts();
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 503,
+          arrayBuffer: async () => Buffer.from(''),
+        }),
+      );
 
       const attachments = new Map([
-        ['att1', { name: 'clip.mp4', contentType: 'video/mp4' }],
+        [
+          'att1',
+          {
+            name: 'clip.mp4',
+            contentType: 'video/mp4',
+            url: 'https://cdn.example/clip.mp4',
+          },
+        ],
       ]);
       const msg = createMessage({
         content: '',
@@ -611,18 +685,26 @@ describe('DiscordChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'dc:1234567890123456',
         expect.objectContaining({
-          content: '[Video: clip.mp4]',
+          content: '[Video: clip.mp4] Download failed',
         }),
       );
     });
 
-    it('stores file attachment with placeholder', async () => {
+    it('stores file attachments with saved paths', async () => {
       const opts = createTestOpts();
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
+      mockFetchSuccess('pdf-bytes');
 
       const attachments = new Map([
-        ['att1', { name: 'report.pdf', contentType: 'application/pdf' }],
+        [
+          'att1',
+          {
+            name: 'report.pdf',
+            contentType: 'application/pdf',
+            url: 'https://cdn.example/report.pdf',
+          },
+        ],
       ]);
       const msg = createMessage({
         content: '',
@@ -634,18 +716,26 @@ describe('DiscordChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'dc:1234567890123456',
         expect.objectContaining({
-          content: '[File: report.pdf]',
+          content: `[File: report.pdf] Staged at ${attachmentWorkspacePath('report.pdf')}`,
         }),
       );
     });
 
-    it('includes text content with attachments', async () => {
+    it('includes text content with saved attachment paths', async () => {
       const opts = createTestOpts();
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
+      mockFetchSuccess('image-bytes');
 
       const attachments = new Map([
-        ['att1', { name: 'photo.jpg', contentType: 'image/jpeg' }],
+        [
+          'att1',
+          {
+            name: 'photo.jpg',
+            contentType: 'image/jpeg',
+            url: 'https://cdn.example/photo.jpg',
+          },
+        ],
       ]);
       const msg = createMessage({
         content: 'Check this out',
@@ -657,19 +747,34 @@ describe('DiscordChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'dc:1234567890123456',
         expect.objectContaining({
-          content: 'Check this out\n[Image: photo.jpg]',
+          content: `Check this out\n[Image: photo.jpg] Staged at ${attachmentWorkspacePath('photo.jpg')}`,
         }),
       );
     });
 
-    it('handles multiple attachments', async () => {
+    it('handles multiple attachments with duplicate filenames', async () => {
       const opts = createTestOpts();
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
+      mockFetchSuccess('attachment-bytes');
 
       const attachments = new Map([
-        ['att1', { name: 'a.png', contentType: 'image/png' }],
-        ['att2', { name: 'b.txt', contentType: 'text/plain' }],
+        [
+          'att1',
+          {
+            name: 'dup.txt',
+            contentType: 'text/plain',
+            url: 'https://cdn.example/dup-1.txt',
+          },
+        ],
+        [
+          'att2',
+          {
+            name: 'dup.txt',
+            contentType: 'text/plain',
+            url: 'https://cdn.example/dup-2.txt',
+          },
+        ],
       ]);
       const msg = createMessage({
         content: '',
@@ -681,7 +786,9 @@ describe('DiscordChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'dc:1234567890123456',
         expect.objectContaining({
-          content: '[Image: a.png]\n[File: b.txt]',
+          content:
+            `[File: dup.txt] Staged at ${attachmentWorkspacePath('dup.txt')}\n` +
+            `[File: dup-2.txt] Staged at ${attachmentWorkspacePath('dup-2.txt')}`,
         }),
       );
     });
@@ -828,6 +935,50 @@ describe('DiscordChannel', () => {
         content: 'z'.repeat(1000),
         flags: 4096,
       });
+    });
+  });
+
+  describe('deleteMessage', () => {
+    it('deletes a Discord message by id', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+
+      const deleteSpy = vi.fn().mockResolvedValue(undefined);
+      currentClient().channels.fetch.mockResolvedValueOnce({
+        messages: {
+          fetch: vi.fn().mockResolvedValue({
+            delete: deleteSpy,
+          }),
+        },
+      });
+
+      await expect(
+        channel.deleteMessage('dc:1234567890123456', 'msg-to-delete'),
+      ).resolves.toBe('deleted');
+      expect(currentClient().channels.fetch).toHaveBeenCalledWith(
+        '1234567890123456',
+      );
+      expect(deleteSpy).toHaveBeenCalled();
+    });
+
+    it('returns not_found when the Discord message no longer exists', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+
+      currentClient().channels.fetch.mockResolvedValueOnce({
+        messages: {
+          fetch: vi.fn().mockRejectedValue({
+            code: 10008,
+            message: 'Unknown Message',
+          }),
+        },
+      });
+
+      await expect(
+        channel.deleteMessage('dc:1234567890123456', 'missing-message'),
+      ).resolves.toBe('not_found');
     });
   });
 
