@@ -94,13 +94,7 @@ function ensureRegisteredGroupChatMetadata(
   group: RegisteredGroup,
   timestamp: string,
 ): void {
-  storeChatMetadata(
-    jid,
-    timestamp,
-    group.name,
-    inferChannelFromJid(jid),
-    true,
-  );
+  storeChatMetadata(jid, timestamp, group.name, inferChannelFromJid(jid), true);
 }
 
 function resolveProjectOwnerFolder(
@@ -663,7 +657,10 @@ export async function processTaskIpc(
 
     case 'delete_discord_message': {
       if (!data.target_jid || !data.message_id) {
-        logger.warn({ data }, 'delete_discord_message: missing target_jid or message_id');
+        logger.warn(
+          { data },
+          'delete_discord_message: missing target_jid or message_id',
+        );
         break;
       }
       if (!data.target_jid.startsWith('dc:')) {
@@ -717,9 +714,10 @@ export async function processTaskIpc(
           JSON.stringify({
             success: true,
             status,
-            message: status === 'deleted'
-              ? `Deleted Discord message ${data.message_id}.`
-              : `Discord message ${data.message_id} was not found.`,
+            message:
+              status === 'deleted'
+                ? `Deleted Discord message ${data.message_id}.`
+                : `Discord message ${data.message_id} was not found.`,
           }),
         );
         logger.info(
@@ -737,11 +735,18 @@ export async function processTaskIpc(
           JSON.stringify({
             success: false,
             error:
-              err instanceof Error ? err.message : 'Discord message deletion failed',
+              err instanceof Error
+                ? err.message
+                : 'Discord message deletion failed',
           }),
         );
         logger.error(
-          { err, sourceGroup, targetJid: data.target_jid, messageId: data.message_id },
+          {
+            err,
+            sourceGroup,
+            targetJid: data.target_jid,
+            messageId: data.message_id,
+          },
           'delete_discord_message failed',
         );
       }
@@ -1083,7 +1088,10 @@ export async function processTaskIpc(
           }
         }
       } else {
-        logger.warn({ data }, 'activate_mirror: missing source_jid or target_jid');
+        logger.warn(
+          { data },
+          'activate_mirror: missing source_jid or target_jid',
+        );
       }
       break;
     }

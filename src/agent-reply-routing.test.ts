@@ -7,9 +7,9 @@ import {
 
 describe('agent reply target selection', () => {
   it('replies only to the source channel for delegated conversations', () => {
-    expect(_getAgentReplyTargets('dc:brain-router', 'dc:personal-assistant')).toEqual([
-      'dc:personal-assistant',
-    ]);
+    expect(
+      _getAgentReplyTargets('dc:brain-router', 'dc:personal-assistant'),
+    ).toEqual(['dc:personal-assistant']);
   });
 
   it('replies to the current chat for direct conversations', () => {
@@ -19,9 +19,9 @@ describe('agent reply target selection', () => {
   });
 
   it('falls back to the current chat when source matches current chat', () => {
-    expect(_getAgentReplyTargets('dc:brain-router', 'dc:brain-router')).toEqual([
-      'dc:brain-router',
-    ]);
+    expect(_getAgentReplyTargets('dc:brain-router', 'dc:brain-router')).toEqual(
+      ['dc:brain-router'],
+    );
   });
 
   it('extracts the source channel from the newest delegated message', () => {

@@ -503,9 +503,7 @@ describe('execute_in_group dispatch', () => {
 
     const messages = getMessagesSince('dc:222', '', 'NanoClaw');
     expect(messages).toHaveLength(1);
-    expect(messages[0].content).toContain(
-      '<source_channel jid="dc:111" />',
-    );
+    expect(messages[0].content).toContain('<source_channel jid="dc:111" />');
     expect(messages[0].content).toContain('Route this message');
   });
 });
