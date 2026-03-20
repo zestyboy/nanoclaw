@@ -50,6 +50,7 @@ export interface ContainerInput {
   isTrusted?: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  effortLevel?: string;
 }
 
 export interface ContainerOutput {
@@ -57,6 +58,8 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  totalCostUsd?: number;
+  usage?: { input_tokens?: number; output_tokens?: number };
 }
 
 interface VolumeMount {

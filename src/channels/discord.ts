@@ -492,6 +492,50 @@ export class DiscordChannel implements Channel {
         .setName('clear')
         .setDescription('Clear the current session context'),
       new SlashCommandBuilder()
+        .setName('reload')
+        .setDescription('Reload skills and CLAUDE.md'),
+      new SlashCommandBuilder()
+        .setName('cost')
+        .setDescription('Show session token usage and cost'),
+      new SlashCommandBuilder()
+        .setName('diff')
+        .setDescription('Show uncommitted changes in the group workspace'),
+      new SlashCommandBuilder()
+        .setName('export')
+        .setDescription('Export the latest archived conversation'),
+      new SlashCommandBuilder()
+        .setName('tasks')
+        .setDescription('List scheduled tasks for this group'),
+      new SlashCommandBuilder()
+        .setName('rename')
+        .setDescription('Name the current session')
+        .addStringOption((opt) =>
+          opt
+            .setName('message')
+            .setDescription('Session name')
+            .setRequired(true),
+        ),
+      new SlashCommandBuilder()
+        .setName('work')
+        .setDescription('List or switch sessions')
+        .addStringOption((opt) =>
+          opt
+            .setName('message')
+            .setDescription(
+              'Session number or name to switch to (omit to list)',
+            )
+            .setRequired(false),
+        ),
+      new SlashCommandBuilder()
+        .setName('effort')
+        .setDescription('Set agent effort level')
+        .addStringOption((opt) =>
+          opt
+            .setName('message')
+            .setDescription('Effort level: low, medium, or high')
+            .setRequired(false),
+        ),
+      new SlashCommandBuilder()
         .setName('catalog')
         .setDescription('Catalog information to a project')
         .addStringOption((opt) =>

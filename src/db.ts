@@ -84,6 +84,25 @@ function createSchema(database: Database.Database): void {
     );
   `);
 
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS session_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      session_id TEXT NOT NULL UNIQUE,
+      name TEXT,
+      summary TEXT,
+      first_prompt TEXT,
+      created_at TEXT NOT NULL,
+      last_used TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_history_group ON session_history(group_folder, last_used);
+
+    CREATE TABLE IF NOT EXISTS group_settings (
+      group_folder TEXT PRIMARY KEY,
+      effort_level TEXT DEFAULT NULL
+    );
+  `);
+
   // Add context_mode column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(
@@ -588,6 +607,78 @@ export function getAllSessions(): Record<string, string> {
     result[row.group_folder] = row.session_id;
   }
   return result;
+}
+
+// --- Session history accessors ---
+
+export interface SessionHistoryEntry {
+  id: number;
+  group_folder: string;
+  session_id: string;
+  name: string | null;
+  summary: string | null;
+  first_prompt: string | null;
+  created_at: string;
+  last_used: string;
+}
+
+export function recordSessionHistory(
+  groupFolder: string,
+  sessionId: string,
+  firstPrompt?: string,
+): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO session_history (group_folder, session_id, first_prompt, created_at, last_used)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET last_used = excluded.last_used`,
+  ).run(groupFolder, sessionId, firstPrompt || null, now, now);
+}
+
+export function touchSessionHistory(sessionId: string): void {
+  db.prepare(
+    `UPDATE session_history SET last_used = ? WHERE session_id = ?`,
+  ).run(new Date().toISOString(), sessionId);
+}
+
+export function renameSession(
+  groupFolder: string,
+  sessionId: string,
+  name: string,
+): void {
+  db.prepare(
+    `UPDATE session_history SET name = ? WHERE group_folder = ? AND session_id = ?`,
+  ).run(name, groupFolder, sessionId);
+}
+
+export function getSessionHistory(
+  groupFolder: string,
+  limit: number = 20,
+): SessionHistoryEntry[] {
+  return db
+    .prepare(
+      `SELECT * FROM session_history WHERE group_folder = ? ORDER BY last_used DESC LIMIT ?`,
+    )
+    .all(groupFolder, limit) as SessionHistoryEntry[];
+}
+
+// --- Group settings accessors ---
+
+export function getGroupEffort(groupFolder: string): string | null {
+  const row = db
+    .prepare('SELECT effort_level FROM group_settings WHERE group_folder = ?')
+    .get(groupFolder) as { effort_level: string | null } | undefined;
+  return row?.effort_level ?? null;
+}
+
+export function setGroupEffort(
+  groupFolder: string,
+  level: string | null,
+): void {
+  db.prepare(
+    `INSERT INTO group_settings (group_folder, effort_level) VALUES (?, ?)
+     ON CONFLICT(group_folder) DO UPDATE SET effort_level = excluded.effort_level`,
+  ).run(groupFolder, level);
 }
 
 // --- Registered group accessors ---

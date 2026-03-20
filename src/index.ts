@@ -4,6 +4,7 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
+  GROUPS_DIR,
   IDLE_TIMEOUT,
   IS_RAILWAY,
   POLL_INTERVAL,
@@ -27,22 +28,31 @@ import {
   ensureContainerRuntimeRunning,
   PROXY_BIND_HOST,
 } from './container-runtime.js';
+import { exec as execCb } from 'child_process';
+import { promisify } from 'util';
 import {
   getAllChats,
   getAllRegisteredGroups,
   deleteSession,
   getAllSessions,
   getAllTasks,
+  getGroupEffort,
   getMessagesSince,
   getNewMessages,
   getRegisteredGroup,
   getRouterState,
+  getSessionHistory,
+  getTasksForGroup,
   initDatabase,
+  recordSessionHistory,
+  renameSession,
+  setGroupEffort,
   setRegisteredGroup,
   setRouterState,
   setSession,
   storeChatMetadata,
   storeMessage,
+  touchSessionHistory,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -64,17 +74,24 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
-import { extractSessionCommand, handleSessionCommand, isSessionCommandAllowed } from './session-commands.js';
+import {
+  extractSessionCommand,
+  handleSessionCommand,
+  isSessionCommandAllowed,
+} from './session-commands.js';
 import { loadStateManifest } from './state-manifest.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+
+const execAsync = promisify(execCb);
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
+const sessionCosts: Record<string, { tokens: number; cost: number }> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let activeReplySourceJids: Record<string, string | undefined> = {};
@@ -276,18 +293,26 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     timezone: TIMEZONE,
     deps: {
       sendMessage: (text) => channel.sendMessage(chatJid, text),
-      setTyping: (typing) => channel.setTyping?.(chatJid, typing) ?? Promise.resolve(),
-      runAgent: (prompt, onOutput) => runAgent(group, prompt, chatJid, onOutput),
+      setTyping: (typing) =>
+        channel.setTyping?.(chatJid, typing) ?? Promise.resolve(),
+      runAgent: (prompt, onOutput) =>
+        runAgent(group, prompt, chatJid, onOutput),
       closeStdin: () => queue.closeStdin(chatJid),
-      advanceCursor: (ts) => { lastAgentTimestamp[chatJid] = ts; saveState(); },
+      advanceCursor: (ts) => {
+        lastAgentTimestamp[chatJid] = ts;
+        saveState();
+      },
       formatMessages,
       canSenderInteract: (msg) => {
         const hasTrigger = TRIGGER_PATTERN.test(msg.content.trim());
         const reqTrigger = !isMainGroup && group.requiresTrigger !== false;
-        return isMainGroup || !reqTrigger || (hasTrigger && (
-          msg.is_from_me ||
-          isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())
-        ));
+        return (
+          isMainGroup ||
+          !reqTrigger ||
+          (hasTrigger &&
+            (msg.is_from_me ||
+              isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())))
+        );
       },
     },
   });
@@ -437,18 +462,28 @@ async function runAgent(
     isTrusted,
   );
 
-  // Wrap onOutput to track session ID from streamed results
+  // Wrap onOutput to track session ID and cost from streamed results
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
+          recordSessionHistory(group.folder, output.newSessionId, prompt.slice(0, 200));
+        }
+        if (output.totalCostUsd != null || output.usage) {
+          const cost = sessionCosts[group.folder] || { tokens: 0, cost: 0 };
+          if (output.totalCostUsd != null) cost.cost = output.totalCostUsd;
+          if (output.usage) {
+            cost.tokens += (output.usage.input_tokens || 0) + (output.usage.output_tokens || 0);
+          }
+          sessionCosts[group.folder] = cost;
         }
         await onOutput(output);
       }
     : undefined;
 
   try {
+    const effortLevel = getGroupEffort(group.folder) || undefined;
     const output = await runContainerAgent(
       group,
       {
@@ -459,6 +494,7 @@ async function runAgent(
         isMain,
         isTrusted,
         assistantName: ASSISTANT_NAME,
+        effortLevel,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -553,7 +589,12 @@ async function startMessageLoop(): Promise<void> {
             // Only close active container if the sender is authorized — otherwise an
             // untrusted user could kill in-flight work by sending /compact (DoS).
             // closeStdin no-ops internally when no container is active.
-            if (isSessionCommandAllowed(isMainGroup, loopCmdMsg.is_from_me === true)) {
+            if (
+              isSessionCommandAllowed(
+                isMainGroup,
+                loopCmdMsg.is_from_me === true,
+              )
+            ) {
               queue.closeStdin(chatJid);
             }
             // Enqueue so processGroupMessages handles auth + cursor advancement.
@@ -774,6 +815,181 @@ async function main(): Promise<void> {
         return;
       }
 
+      // --- Phase 1: Quick wins ---
+
+      if (command === 'reload') {
+        queue.closeStdin(chatJid);
+        respond('Reloading. Send a message to continue.').catch((err) =>
+          logger.warn({ chatJid, err }, 'Failed to respond to /reload'),
+        );
+        logger.info({ group: group.name }, 'Reload triggered via slash command');
+        return;
+      }
+
+      if (command === 'cost') {
+        const cost = sessionCosts[group.folder];
+        respond(
+          cost
+            ? `Session: ${cost.tokens.toLocaleString()} tokens, $${cost.cost.toFixed(4)}`
+            : 'No cost data yet.',
+        ).catch((err) =>
+          logger.warn({ chatJid, err }, 'Failed to respond to /cost'),
+        );
+        return;
+      }
+
+      if (command === 'diff') {
+        const groupPath = path.join(GROUPS_DIR, group.folder);
+        execAsync(`git -C "${groupPath}" diff --stat`, { timeout: 5000 })
+          .then(({ stdout }) =>
+            respond(stdout.trim() || 'No uncommitted changes.'),
+          )
+          .catch(() => respond('Not a git repository or git error.'))
+          .catch(() => {});
+        return;
+      }
+
+      if (command === 'export') {
+        const convDir = path.join(GROUPS_DIR, group.folder, 'conversations');
+        try {
+          if (!fs.existsSync(convDir)) {
+            respond('No conversations archived yet.').catch(() => {});
+            return;
+          }
+          const files = fs
+            .readdirSync(convDir)
+            .filter((f) => f.endsWith('.md'))
+            .sort()
+            .reverse();
+          if (files.length === 0) {
+            respond('No conversations archived yet.').catch(() => {});
+            return;
+          }
+          const latest = fs.readFileSync(
+            path.join(convDir, files[0]),
+            'utf-8',
+          );
+          // Truncate for Discord's 2000 char limit on ephemeral replies
+          const truncated =
+            latest.length > 1900
+              ? latest.slice(0, 1900) + '\n\n... (truncated)'
+              : latest;
+          respond(truncated).catch(() => {});
+        } catch {
+          respond('Failed to read conversations.').catch(() => {});
+        }
+        return;
+      }
+
+      if (command === 'tasks') {
+        const tasks = getTasksForGroup(group.folder);
+        if (tasks.length === 0) {
+          respond('No scheduled tasks.').catch(() => {});
+          return;
+        }
+        const formatted = tasks
+          .map(
+            (t) =>
+              `• **${t.prompt.slice(0, 60)}** (${t.status}) — ${t.schedule_type}: ${t.schedule_value}`,
+          )
+          .join('\n');
+        respond(formatted).catch(() => {});
+        return;
+      }
+
+      // --- Phase 2: Session management ---
+
+      if (command === 'rename') {
+        const sessionId = sessions[group.folder];
+        if (!sessionId) {
+          respond('No active session.').catch(() => {});
+          return;
+        }
+        if (!args.trim()) {
+          respond('Usage: /rename <name>').catch(() => {});
+          return;
+        }
+        renameSession(group.folder, sessionId, args.trim());
+        respond(`Session renamed to "${args.trim()}".`).catch(() => {});
+        logger.info(
+          { group: group.name, name: args.trim() },
+          'Session renamed',
+        );
+        return;
+      }
+
+      if (command === 'work') {
+        if (!args.trim()) {
+          // List sessions
+          const history = getSessionHistory(group.folder);
+          if (history.length === 0) {
+            respond('No session history.').catch(() => {});
+            return;
+          }
+          const activeSessionId = sessions[group.folder];
+          const lines = history.map((h, i) => {
+            const active = h.session_id === activeSessionId ? ' ← active' : '';
+            const name = h.name || h.first_prompt?.slice(0, 40) || h.session_id.slice(0, 8);
+            const date = h.last_used.split('T')[0];
+            return `${i + 1}. **${name}** (${date})${active}`;
+          });
+          respond(lines.join('\n')).catch(() => {});
+          return;
+        }
+        // Switch to session by number or name
+        const history = getSessionHistory(group.folder);
+        const idx = parseInt(args.trim(), 10);
+        let target: typeof history[0] | undefined;
+        if (!isNaN(idx) && idx >= 1 && idx <= history.length) {
+          target = history[idx - 1];
+        } else {
+          target = history.find(
+            (h) =>
+              h.name?.toLowerCase() === args.trim().toLowerCase() ||
+              h.session_id.startsWith(args.trim()),
+          );
+        }
+        if (!target) {
+          respond(`Session not found: "${args.trim()}"`).catch(() => {});
+          return;
+        }
+        // Close active container, switch session
+        queue.closeStdin(chatJid);
+        sessions[group.folder] = target.session_id;
+        setSession(group.folder, target.session_id);
+        touchSessionHistory(target.session_id);
+        const displayName = target.name || target.session_id.slice(0, 8);
+        respond(`Switched to session: ${displayName}`).catch(() => {});
+        logger.info(
+          { group: group.name, sessionId: target.session_id },
+          'Session switched via /work',
+        );
+        return;
+      }
+
+      if (command === 'effort') {
+        const validLevels = ['low', 'medium', 'high'];
+        const level = args.trim().toLowerCase();
+        if (!level) {
+          const current = getGroupEffort(group.folder) || 'default';
+          respond(`Current effort: ${current}`).catch(() => {});
+          return;
+        }
+        if (!validLevels.includes(level)) {
+          respond(`Invalid effort level. Use: ${validLevels.join(', ')}`).catch(
+            () => {},
+          );
+          return;
+        }
+        setGroupEffort(group.folder, level);
+        respond(`Effort set to: ${level}`).catch(() => {});
+        logger.info(
+          { group: group.name, effort: level },
+          'Effort level changed',
+        );
+        return;
+      }
+
       // Brain Router passthrough commands — inject as a prefixed message
       // into the main group for the Brain Router to classify.
       const passthroughCommands = [
@@ -798,7 +1014,7 @@ async function main(): Promise<void> {
           respond('No Brain Router group configured.').catch(() => {});
           return;
         }
-        const [mainJid, mainGroup] = routerEntry;
+        const [mainJid] = routerEntry;
 
         // Build the prefixed message content
         const content = `/${command} ${args}`.trim();

@@ -28,6 +28,7 @@ interface ContainerInput {
   isTrusted?: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  effortLevel?: string;
 }
 
 interface ContainerOutput {
@@ -35,6 +36,8 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  totalCostUsd?: number;
+  usage?: { input_tokens?: number; output_tokens?: number };
 }
 
 interface SessionEntry {
@@ -402,6 +405,7 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
+      effort: containerInput.effortLevel as 'low' | 'medium' | 'high' | undefined,
       systemPrompt: globalClaudeMd
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
         : undefined,
@@ -456,12 +460,19 @@ async function runQuery(
 
     if (message.type === 'result') {
       resultCount++;
-      const textResult = 'result' in message ? (message as { result?: string }).result : null;
+      const resultMsg = message as {
+        result?: string;
+        total_cost_usd?: number;
+        usage?: { input_tokens?: number; output_tokens?: number };
+      };
+      const textResult = resultMsg.result ?? null;
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
       writeOutput({
         status: 'success',
         result: textResult || null,
-        newSessionId
+        newSessionId,
+        totalCostUsd: resultMsg.total_cost_usd,
+        usage: resultMsg.usage,
       });
     }
   }
