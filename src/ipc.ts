@@ -890,14 +890,10 @@ export async function processTaskIpc(
           path.join(resultDir, resultFileName),
           JSON.stringify({
             success: false,
-            error:
-              err instanceof Error ? err.message : 'PDF extraction failed',
+            error: err instanceof Error ? err.message : 'PDF extraction failed',
           }),
         );
-        logger.warn(
-          { err, sourceGroup, sourcePath },
-          'PDF extraction failed',
-        );
+        logger.warn({ err, sourceGroup, sourcePath }, 'PDF extraction failed');
       }
       break;
     }

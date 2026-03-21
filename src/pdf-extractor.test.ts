@@ -56,7 +56,11 @@ describe('pdf-extractor', () => {
   });
 
   it('extracts pdf text into a cached sidecar file', () => {
-    const attachmentDir = path.join(groupDirRef.current, 'attachments', 'msg-1');
+    const attachmentDir = path.join(
+      groupDirRef.current,
+      'attachments',
+      'msg-1',
+    );
     fs.mkdirSync(attachmentDir, { recursive: true });
     fs.writeFileSync(path.join(attachmentDir, 'report.pdf'), 'pdf-bytes');
 
@@ -74,7 +78,9 @@ describe('pdf-extractor', () => {
 
     expect(first.pageCount).toBe(7);
     expect(first.characterCount).toBeGreaterThan(80);
-    expect(first.extractedTextPath).toContain('/workspace/group/.nanoclaw/pdf-extract/');
+    expect(first.extractedTextPath).toContain(
+      '/workspace/group/.nanoclaw/pdf-extract/',
+    );
     expect(first.excerpt.length).toBeLessThanOrEqual(80);
     expect(second.extractedTextPath).toBe(first.extractedTextPath);
     expect(execFileSyncMock).toHaveBeenCalledWith(
@@ -83,7 +89,9 @@ describe('pdf-extractor', () => {
       expect.objectContaining({ encoding: 'utf8' }),
     );
     expect(
-      execFileSyncMock.mock.calls.filter(([command]) => command === 'pdftotext'),
+      execFileSyncMock.mock.calls.filter(
+        ([command]) => command === 'pdftotext',
+      ),
     ).toHaveLength(1);
   });
 
@@ -94,7 +102,11 @@ describe('pdf-extractor', () => {
       throw new Error(`Unexpected command: ${command}`);
     });
 
-    const attachmentDir = path.join(groupDirRef.current, 'attachments', 'msg-2');
+    const attachmentDir = path.join(
+      groupDirRef.current,
+      'attachments',
+      'msg-2',
+    );
     fs.mkdirSync(attachmentDir, { recursive: true });
     fs.writeFileSync(path.join(attachmentDir, 'scan.pdf'), 'pdf-bytes');
 
@@ -109,7 +121,11 @@ describe('pdf-extractor', () => {
   });
 
   it('accepts visible host paths for railway-style workspaces', () => {
-    const attachmentDir = path.join(groupDirRef.current, 'attachments', 'msg-3');
+    const attachmentDir = path.join(
+      groupDirRef.current,
+      'attachments',
+      'msg-3',
+    );
     fs.mkdirSync(attachmentDir, { recursive: true });
     const hostPdfPath = path.join(attachmentDir, 'railway.pdf');
     fs.writeFileSync(hostPdfPath, 'pdf-bytes');
@@ -121,6 +137,8 @@ describe('pdf-extractor', () => {
     });
 
     expect(result.sourcePath).toBe(hostPdfPath);
-    expect(result.extractedTextPath).toMatch(/\.nanoclaw\/pdf-extract\/.*\.txt$/);
+    expect(result.extractedTextPath).toMatch(
+      /\.nanoclaw\/pdf-extract\/.*\.txt$/,
+    );
   });
 });

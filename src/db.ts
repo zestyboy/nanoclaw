@@ -766,9 +766,7 @@ export function getSessionHistory(
 
 // --- Group settings accessors ---
 
-export function getGroupEffort(
-  groupFolder: string,
-): string | null {
+export function getGroupEffort(groupFolder: string): string | null {
   const row = db
     .prepare('SELECT effort_level FROM group_settings WHERE group_folder = ?')
     .get(groupFolder) as { effort_level: string | null } | undefined;
