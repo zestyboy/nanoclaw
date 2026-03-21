@@ -33,10 +33,12 @@ import { promisify } from 'util';
 import {
   getAllChats,
   getAllRegisteredGroups,
+  deleteSessionMetrics,
   deleteSession,
   getAllSessions,
   getAllTasks,
   getGroupEffort,
+  getSessionMetrics,
   getMessagesSince,
   getNewMessages,
   getRegisteredGroup,
@@ -53,6 +55,7 @@ import {
   storeChatMetadata,
   storeMessage,
   touchSessionHistory,
+  upsertSessionMetrics,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -83,6 +86,12 @@ import { loadStateManifest } from './state-manifest.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import {
+  collectSessionWarnings,
+  formatContextReport,
+  mergeWarnedThresholds,
+} from './session-health.js';
+import { refreshSessionMetrics } from './session-metrics.js';
 
 const execAsync = promisify(execCb);
 
@@ -120,6 +129,34 @@ function loadState(): void {
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+}
+
+function clearSessionState(groupFolder: string): void {
+  delete sessions[groupFolder];
+  deleteSession(groupFolder);
+  deleteSessionMetrics(groupFolder);
+}
+
+async function sendSessionWarnings(
+  chatJid: string,
+  groupFolder: string,
+): Promise<void> {
+  const metrics = getSessionMetrics(groupFolder);
+  if (!metrics) return;
+
+  const warnings = collectSessionWarnings(metrics);
+  if (warnings.length === 0) return;
+
+  for (const warning of warnings) {
+    await sendWithMirror(chatJid, warning.message);
+  }
+
+  upsertSessionMetrics(groupFolder, {
+    warned_thresholds: mergeWarnedThresholds(
+      metrics,
+      warnings.map((warning) => warning.key),
+    ),
+  });
 }
 
 function logStateSummary(): void {
@@ -347,6 +384,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     'Processing messages',
   );
 
+  refreshSessionMetrics(group.folder, sessions[group.folder]);
+  await sendSessionWarnings(chatJid, group.folder);
+
   // Track idle timer for closing stdin when agent is idle
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -366,6 +406,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let outputSentToUser = false;
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
+    refreshSessionMetrics(group.folder, result.newSessionId, result);
+    await sendSessionWarnings(chatJid, group.folder);
+
     // Streaming output callback — called for each agent result
     if (result.result) {
       const raw =
@@ -474,14 +517,10 @@ async function runAgent(
             prompt.slice(0, 200),
           );
         }
-        if (output.totalCostUsd != null || output.usage) {
+        if (output.usage) {
           const cost = sessionCosts[group.folder] || { tokens: 0, cost: 0 };
-          if (output.totalCostUsd != null) cost.cost = output.totalCostUsd;
-          if (output.usage) {
-            cost.tokens +=
-              (output.usage.input_tokens || 0) +
-              (output.usage.output_tokens || 0);
-          }
+          cost.cost = output.usage.totalCostUsd;
+          cost.tokens += output.usage.inputTokens + output.usage.outputTokens;
           sessionCosts[group.folder] = cost;
         }
         await onOutput(output);
@@ -512,12 +551,13 @@ async function runAgent(
       setSession(group.folder, output.newSessionId);
     }
 
+    refreshSessionMetrics(group.folder, output.newSessionId ?? sessionId, output);
+
     if (output.status === 'error') {
       // Clear stale session if the conversation was not found —
       // prevents infinite retry loops with a dead session ID.
       if (output.error?.includes('No conversation found')) {
-        delete sessions[group.folder];
-        deleteSession(group.folder);
+        clearSessionState(group.folder);
         logger.warn(
           { group: group.name },
           'Cleared stale session (conversation not found)',
@@ -632,8 +672,7 @@ async function startMessageLoop(): Promise<void> {
             (m) => m.content.trim().toLowerCase() === '/clear',
           );
           if (clearMsg) {
-            delete sessions[group.folder];
-            deleteSession(group.folder);
+            clearSessionState(group.folder);
             lastAgentTimestamp[chatJid] = clearMsg.timestamp;
             saveState();
             channel
@@ -807,8 +846,7 @@ async function main(): Promise<void> {
       }
 
       if (command === 'clear') {
-        delete sessions[group.folder];
-        deleteSession(group.folder);
+        clearSessionState(group.folder);
         lastAgentTimestamp[chatJid] = new Date().toISOString();
         saveState();
         respond('Session cleared.').catch((err) =>
@@ -818,6 +856,20 @@ async function main(): Promise<void> {
           ),
         );
         logger.info({ group: group.name }, 'Session cleared via slash command');
+        return;
+      }
+
+      if (command === 'context') {
+        const metrics = refreshSessionMetrics(group.folder, sessions[group.folder]);
+        const response = metrics
+          ? formatContextReport(metrics)
+          : 'No active session metrics yet.';
+        respond(response).catch((err) =>
+          logger.warn(
+            { chatJid, err },
+            'Failed to respond to /context slash command',
+          ),
+        );
         return;
       }
 
@@ -1008,9 +1060,12 @@ async function main(): Promise<void> {
         } else {
           // No active container — rewind directly on host
           const groupPath = path.join(GROUPS_DIR, group.folder);
-          execAsync(`git -C "${groupPath}" checkout . && git -C "${groupPath}" clean -fd`, {
-            timeout: 5000,
-          })
+          execAsync(
+            `git -C "${groupPath}" checkout . && git -C "${groupPath}" clean -fd`,
+            {
+              timeout: 5000,
+            },
+          )
             .then(() => respond('File changes reverted.'))
             .catch(() => respond('No active session or not a git repository.'))
             .catch(() => {});

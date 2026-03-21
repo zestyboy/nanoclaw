@@ -258,9 +258,7 @@ describe('/work session switching logic', () => {
     renameSession('test-group', 'session-1', 'auth-work');
 
     const history = getSessionHistory('test-group');
-    const target = history.find(
-      (h) => h.name?.toLowerCase() === 'auth-work',
-    );
+    const target = history.find((h) => h.name?.toLowerCase() === 'auth-work');
     expect(target).toBeDefined();
     expect(target!.session_id).toBe('session-1');
   });
@@ -269,9 +267,7 @@ describe('/work session switching logic', () => {
     recordSessionHistory('test-group', 'abcd1234-full-session-id');
 
     const history = getSessionHistory('test-group');
-    const target = history.find((h) =>
-      h.session_id.startsWith('abcd1234'),
-    );
+    const target = history.find((h) => h.session_id.startsWith('abcd1234'));
     expect(target).toBeDefined();
   });
 });
@@ -289,15 +285,18 @@ describe('/cost session costs tracking', () => {
 
     // First result
     const output1 = {
-      totalCostUsd: 0.005,
-      usage: { input_tokens: 1000, output_tokens: 500 },
+      usage: {
+        inputTokens: 1000,
+        outputTokens: 500,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        totalCostUsd: 0.005,
+      },
     };
     const cost1 = sessionCosts[groupFolder] || { tokens: 0, cost: 0 };
-    if (output1.totalCostUsd != null) cost1.cost = output1.totalCostUsd;
     if (output1.usage) {
-      cost1.tokens +=
-        (output1.usage.input_tokens || 0) +
-        (output1.usage.output_tokens || 0);
+      cost1.cost = output1.usage.totalCostUsd;
+      cost1.tokens += output1.usage.inputTokens + output1.usage.outputTokens;
     }
     sessionCosts[groupFolder] = cost1;
 
@@ -306,15 +305,18 @@ describe('/cost session costs tracking', () => {
 
     // Second result — cost accumulates tokens, replaces total cost
     const output2 = {
-      totalCostUsd: 0.012,
-      usage: { input_tokens: 2000, output_tokens: 800 },
+      usage: {
+        inputTokens: 2000,
+        outputTokens: 800,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        totalCostUsd: 0.012,
+      },
     };
     const cost2 = sessionCosts[groupFolder] || { tokens: 0, cost: 0 };
-    if (output2.totalCostUsd != null) cost2.cost = output2.totalCostUsd;
     if (output2.usage) {
-      cost2.tokens +=
-        (output2.usage.input_tokens || 0) +
-        (output2.usage.output_tokens || 0);
+      cost2.cost = output2.usage.totalCostUsd;
+      cost2.tokens += output2.usage.inputTokens + output2.usage.outputTokens;
     }
     sessionCosts[groupFolder] = cost2;
 

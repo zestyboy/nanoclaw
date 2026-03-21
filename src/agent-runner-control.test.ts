@@ -22,7 +22,8 @@ function drainIpcInput(inputDir: string): {
     (f) => f.startsWith('_control-') && f.endsWith('.json'),
   );
   const messageFiles = allFiles.filter(
-    (f) => !f.startsWith('_control-') && !f.startsWith('_') && f.endsWith('.json'),
+    (f) =>
+      !f.startsWith('_control-') && !f.startsWith('_') && f.endsWith('.json'),
   );
 
   const controlResults: string[] = [];
@@ -187,13 +188,18 @@ describe('ContainerOutput with cost fields', () => {
       status: 'success' as const,
       result: 'Hello',
       newSessionId: 'session-123',
-      totalCostUsd: 0.0042,
-      usage: { input_tokens: 1500, output_tokens: 300 },
+      usage: {
+        inputTokens: 1500,
+        outputTokens: 300,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        totalCostUsd: 0.0042,
+      },
     };
 
-    expect(output.totalCostUsd).toBe(0.0042);
-    expect(output.usage.input_tokens).toBe(1500);
-    expect(output.usage.output_tokens).toBe(300);
+    expect(output.usage.totalCostUsd).toBe(0.0042);
+    expect(output.usage.inputTokens).toBe(1500);
+    expect(output.usage.outputTokens).toBe(300);
 
     // Without cost fields
     const outputNoCost = {

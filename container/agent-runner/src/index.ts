@@ -37,8 +37,20 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
-  totalCostUsd?: number;
-  usage?: { input_tokens?: number; output_tokens?: number };
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadInputTokens: number;
+    cacheCreationInputTokens: number;
+    totalCostUsd: number;
+    modelUsage?: Record<string, unknown>;
+  };
+  rateLimitInfo?: {
+    status: 'allowed' | 'allowed_warning' | 'rejected';
+    resetsAt?: number;
+    rateLimitType?: string;
+    utilization?: number;
+  };
 }
 
 interface SessionEntry {
@@ -512,7 +524,12 @@ async function runQuery(
       const resultMsg = message as {
         result?: string;
         total_cost_usd?: number;
-        usage?: { input_tokens?: number; output_tokens?: number };
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cache_read_input_tokens?: number;
+          cache_creation_input_tokens?: number;
+        };
       };
       const textResult = resultMsg.result ?? null;
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
@@ -520,8 +537,33 @@ async function runQuery(
         status: 'success',
         result: textResult || null,
         newSessionId,
-        totalCostUsd: resultMsg.total_cost_usd,
-        usage: resultMsg.usage,
+        usage: {
+          inputTokens: resultMsg.usage?.input_tokens || 0,
+          outputTokens: resultMsg.usage?.output_tokens || 0,
+          cacheReadInputTokens: resultMsg.usage?.cache_read_input_tokens || 0,
+          cacheCreationInputTokens:
+            resultMsg.usage?.cache_creation_input_tokens || 0,
+          totalCostUsd: resultMsg.total_cost_usd || 0,
+          modelUsage:
+            'modelUsage' in message
+              ? ((message as { modelUsage?: Record<string, unknown> }).modelUsage ??
+                undefined)
+              : undefined,
+        },
+      });
+    }
+
+    if (message.type === 'rate_limit_event') {
+      writeOutput({
+        status: 'success',
+        result: null,
+        newSessionId,
+        rateLimitInfo: {
+          status: message.rate_limit_info.status,
+          resetsAt: message.rate_limit_info.resetsAt,
+          rateLimitType: message.rate_limit_info.rateLimitType,
+          utilization: message.rate_limit_info.utilization,
+        },
       });
     }
   }

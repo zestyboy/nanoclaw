@@ -9,6 +9,8 @@ import {
   NewMessage,
   RegisteredGroup,
   ScheduledTask,
+  SessionMetrics,
+  SessionMetricsPatch,
   TaskRunLog,
 } from './types.js';
 
@@ -72,6 +74,25 @@ function createSchema(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS sessions (
       group_folder TEXT PRIMARY KEY,
       session_id TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS session_metrics (
+      group_folder TEXT PRIMARY KEY,
+      session_id TEXT,
+      transcript_bytes INTEGER DEFAULT 0,
+      embedded_document_bytes INTEGER DEFAULT 0,
+      largest_entry_bytes INTEGER DEFAULT 0,
+      top_embedded_files TEXT,
+      last_input_tokens INTEGER,
+      last_output_tokens INTEGER,
+      last_total_cost_usd REAL,
+      last_model_usage TEXT,
+      last_context_percent REAL,
+      last_rate_limit_utilization REAL,
+      rate_limit_status TEXT,
+      rate_limit_type TEXT,
+      rate_limit_resets_at TEXT,
+      warned_thresholds TEXT,
+      updated_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
@@ -607,6 +628,170 @@ export function getAllSessions(): Record<string, string> {
     result[row.group_folder] = row.session_id;
   }
   return result;
+}
+
+function parseJsonColumn<T>(value: string | null): T | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
+}
+
+export function getSessionMetrics(
+  groupFolder: string,
+): SessionMetrics | undefined {
+  const row = db
+    .prepare('SELECT * FROM session_metrics WHERE group_folder = ?')
+    .get(groupFolder) as
+    | {
+        group_folder: string;
+        session_id: string | null;
+        transcript_bytes: number | null;
+        embedded_document_bytes: number | null;
+        largest_entry_bytes: number | null;
+        top_embedded_files: string | null;
+        last_input_tokens: number | null;
+        last_output_tokens: number | null;
+        last_total_cost_usd: number | null;
+        last_model_usage: string | null;
+        last_context_percent: number | null;
+        last_rate_limit_utilization: number | null;
+        rate_limit_status: string | null;
+        rate_limit_type: string | null;
+        rate_limit_resets_at: string | null;
+        warned_thresholds: string | null;
+        updated_at: string;
+      }
+    | undefined;
+  if (!row) return undefined;
+  return {
+    group_folder: row.group_folder,
+    session_id: row.session_id,
+    transcript_bytes: row.transcript_bytes ?? 0,
+    embedded_document_bytes: row.embedded_document_bytes ?? 0,
+    largest_entry_bytes: row.largest_entry_bytes ?? 0,
+    top_embedded_files: parseJsonColumn(row.top_embedded_files) ?? [],
+    last_input_tokens: row.last_input_tokens,
+    last_output_tokens: row.last_output_tokens,
+    last_total_cost_usd: row.last_total_cost_usd,
+    last_model_usage: parseJsonColumn(row.last_model_usage),
+    last_context_percent: row.last_context_percent,
+    last_rate_limit_utilization: row.last_rate_limit_utilization,
+    rate_limit_status: row.rate_limit_status,
+    rate_limit_type: row.rate_limit_type,
+    rate_limit_resets_at: row.rate_limit_resets_at,
+    warned_thresholds: parseJsonColumn(row.warned_thresholds) ?? [],
+    updated_at: row.updated_at,
+  };
+}
+
+export function upsertSessionMetrics(
+  groupFolder: string,
+  patch: SessionMetricsPatch,
+): SessionMetrics {
+  const existing = getSessionMetrics(groupFolder);
+  const merged: SessionMetrics = {
+    group_folder: groupFolder,
+    session_id: patch.session_id ?? existing?.session_id ?? null,
+    transcript_bytes: patch.transcript_bytes ?? existing?.transcript_bytes ?? 0,
+    embedded_document_bytes:
+      patch.embedded_document_bytes ??
+      existing?.embedded_document_bytes ??
+      0,
+    largest_entry_bytes:
+      patch.largest_entry_bytes ?? existing?.largest_entry_bytes ?? 0,
+    top_embedded_files:
+      patch.top_embedded_files ?? existing?.top_embedded_files ?? [],
+    last_input_tokens:
+      patch.last_input_tokens !== undefined
+        ? patch.last_input_tokens
+        : existing?.last_input_tokens ?? null,
+    last_output_tokens:
+      patch.last_output_tokens !== undefined
+        ? patch.last_output_tokens
+        : existing?.last_output_tokens ?? null,
+    last_total_cost_usd:
+      patch.last_total_cost_usd !== undefined
+        ? patch.last_total_cost_usd
+        : existing?.last_total_cost_usd ?? null,
+    last_model_usage:
+      patch.last_model_usage !== undefined
+        ? patch.last_model_usage
+        : existing?.last_model_usage ?? null,
+    last_context_percent:
+      patch.last_context_percent !== undefined
+        ? patch.last_context_percent
+        : existing?.last_context_percent ?? null,
+    last_rate_limit_utilization:
+      patch.last_rate_limit_utilization !== undefined
+        ? patch.last_rate_limit_utilization
+        : existing?.last_rate_limit_utilization ?? null,
+    rate_limit_status:
+      patch.rate_limit_status !== undefined
+        ? patch.rate_limit_status
+        : existing?.rate_limit_status ?? null,
+    rate_limit_type:
+      patch.rate_limit_type !== undefined
+        ? patch.rate_limit_type
+        : existing?.rate_limit_type ?? null,
+    rate_limit_resets_at:
+      patch.rate_limit_resets_at !== undefined
+        ? patch.rate_limit_resets_at
+        : existing?.rate_limit_resets_at ?? null,
+    warned_thresholds:
+      patch.warned_thresholds ?? existing?.warned_thresholds ?? [],
+    updated_at: new Date().toISOString(),
+  };
+
+  db.prepare(
+    `INSERT OR REPLACE INTO session_metrics (
+      group_folder,
+      session_id,
+      transcript_bytes,
+      embedded_document_bytes,
+      largest_entry_bytes,
+      top_embedded_files,
+      last_input_tokens,
+      last_output_tokens,
+      last_total_cost_usd,
+      last_model_usage,
+      last_context_percent,
+      last_rate_limit_utilization,
+      rate_limit_status,
+      rate_limit_type,
+      rate_limit_resets_at,
+      warned_thresholds,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    merged.group_folder,
+    merged.session_id,
+    merged.transcript_bytes,
+    merged.embedded_document_bytes,
+    merged.largest_entry_bytes,
+    JSON.stringify(merged.top_embedded_files),
+    merged.last_input_tokens,
+    merged.last_output_tokens,
+    merged.last_total_cost_usd,
+    merged.last_model_usage ? JSON.stringify(merged.last_model_usage) : null,
+    merged.last_context_percent,
+    merged.last_rate_limit_utilization,
+    merged.rate_limit_status,
+    merged.rate_limit_type,
+    merged.rate_limit_resets_at,
+    JSON.stringify(merged.warned_thresholds),
+    merged.updated_at,
+  );
+
+  return merged;
+}
+
+export function deleteSessionMetrics(groupFolder: string): void {
+  db.prepare('DELETE FROM session_metrics WHERE group_folder = ?').run(
+    groupFolder,
+  );
 }
 
 // --- Session history accessors ---

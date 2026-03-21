@@ -35,7 +35,11 @@ import {
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
-import { RegisteredGroup } from './types.js';
+import {
+  AgentRateLimitSnapshot,
+  AgentUsageSnapshot,
+  RegisteredGroup,
+} from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -58,8 +62,8 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
-  totalCostUsd?: number;
-  usage?: { input_tokens?: number; output_tokens?: number };
+  usage?: AgentUsageSnapshot;
+  rateLimitInfo?: AgentRateLimitSnapshot;
 }
 
 interface VolumeMount {

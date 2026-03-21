@@ -492,6 +492,9 @@ export class DiscordChannel implements Channel {
         .setName('clear')
         .setDescription('Clear the current session context'),
       new SlashCommandBuilder()
+        .setName('context')
+        .setDescription('Show current session context usage'),
+      new SlashCommandBuilder()
         .setName('reload')
         .setDescription('Reload skills and CLAUDE.md'),
       new SlashCommandBuilder()
