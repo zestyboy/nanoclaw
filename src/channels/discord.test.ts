@@ -716,7 +716,7 @@ describe('DiscordChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'dc:1234567890123456',
         expect.objectContaining({
-          content: `[File: report.pdf] Staged at ${attachmentWorkspacePath('report.pdf')}`,
+          content: `[PDF: report.pdf] Staged at ${attachmentWorkspacePath('report.pdf')}. Use \`mcp__nanoclaw__extract_pdf_text\` on this path; do not attach the raw PDF into Claude.`,
         }),
       );
     });

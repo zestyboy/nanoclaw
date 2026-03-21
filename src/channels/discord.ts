@@ -37,6 +37,10 @@ export interface DiscordChannelOpts {
 
 function describeAttachment(att: Attachment): string {
   const contentType = att.contentType || '';
+  const lowerName = att.name?.toLowerCase() || '';
+  if (contentType === 'application/pdf' || lowerName.endsWith('.pdf')) {
+    return 'PDF';
+  }
   if (contentType.startsWith('image/')) {
     return 'Image';
   }
@@ -128,9 +132,16 @@ async function downloadAttachments(
       const hostFilePath = path.join(groupDir, relativeFilePath);
       fs.writeFileSync(hostFilePath, buffer);
 
-      descriptions.push(
-        `[${attachmentType}: ${filename}] Staged at ${toWorkspacePath(relativeFilePath, groupFolder)}`,
-      );
+      const workspacePath = toWorkspacePath(relativeFilePath, groupFolder);
+      if (attachmentType === 'PDF') {
+        descriptions.push(
+          `[PDF: ${filename}] Staged at ${workspacePath}. Use \`mcp__nanoclaw__extract_pdf_text\` on this path; do not attach the raw PDF into Claude.`,
+        );
+      } else {
+        descriptions.push(
+          `[${attachmentType}: ${filename}] Staged at ${workspacePath}`,
+        );
+      }
       logger.info(
         {
           groupFolder,

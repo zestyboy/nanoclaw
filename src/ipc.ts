@@ -37,6 +37,7 @@ import {
   assertPushChangesAllowed,
   resolvePushChangesBranch,
 } from './push-changes-policy.js';
+import { extractPdfText } from './pdf-extractor.js';
 import { scheduleQmdReindex } from './qmd-state.js';
 import { searchRecentNotes } from './recent-note-search.js';
 import { scheduleCanonicalSnapshot } from './state-backup.js';
@@ -295,6 +296,9 @@ export async function processTaskIpc(
     createPr?: boolean;
     prTitle?: string;
     prBody?: string;
+    source_path?: string;
+    page_start?: number;
+    page_end?: number;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -827,6 +831,73 @@ export async function processTaskIpc(
           }),
         );
         logger.error({ err, sourceGroup }, 'Public knowledge search failed');
+      }
+      break;
+    }
+
+    case 'extract_pdf_text': {
+      const {
+        source_path: sourcePath,
+        page_start: pageStart,
+        page_end: pageEnd,
+        resultId,
+      } = data as {
+        source_path?: string;
+        page_start?: number;
+        page_end?: number;
+        resultId?: string;
+      };
+
+      const resultDir = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup.replace(/:/g, '_'),
+        'input',
+      );
+      fs.mkdirSync(resultDir, { recursive: true });
+      const resultFileName = resultId
+        ? `result-${resultId}.json`
+        : `result-${Date.now()}.json`;
+
+      try {
+        if (!sourcePath) {
+          throw new Error('source_path is required');
+        }
+
+        const result = extractPdfText({
+          sourceGroup,
+          sourcePath,
+          isElevated: hasElevatedPrivilege(isMain, isTrusted),
+          pageStart,
+          pageEnd,
+        });
+
+        fs.writeFileSync(
+          path.join(resultDir, resultFileName),
+          JSON.stringify({ success: true, result }),
+        );
+        logger.info(
+          {
+            sourceGroup,
+            sourcePath,
+            extractedTextPath: result.extractedTextPath,
+            scanCandidate: result.scanCandidate,
+          },
+          'PDF extraction completed',
+        );
+      } catch (err) {
+        fs.writeFileSync(
+          path.join(resultDir, resultFileName),
+          JSON.stringify({
+            success: false,
+            error:
+              err instanceof Error ? err.message : 'PDF extraction failed',
+          }),
+        );
+        logger.warn(
+          { err, sourceGroup, sourcePath },
+          'PDF extraction failed',
+        );
       }
       break;
     }

@@ -40,10 +40,105 @@ function writeIpcFile(dir: string, data: object): string {
   return filename;
 }
 
+async function waitForTaskResult(
+  taskId: string,
+  maxWait = 15000,
+): Promise<unknown> {
+  const resultPath = path.join(IPC_DIR, 'input', `result-${taskId}.json`);
+  const pollInterval = 200;
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < maxWait) {
+    if (fs.existsSync(resultPath)) {
+      const raw = fs.readFileSync(resultPath, 'utf-8');
+      fs.unlinkSync(resultPath);
+      return JSON.parse(raw);
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+  }
+
+  throw new Error('Timed out waiting for host result');
+}
+
 const server = new McpServer({
   name: 'nanoclaw',
   version: '1.0.0',
 });
+
+server.tool(
+  'extract_pdf_text',
+  'Extract text from a mounted PDF without embedding the PDF itself into the Claude session. Use this for staged PDF attachments and local workspace PDFs instead of attaching raw PDFs to the conversation.',
+  {
+    source_path: z
+      .string()
+      .describe(
+        'Mounted workspace path to the PDF, e.g. /workspace/group/attachments/.../file.pdf',
+      ),
+    page_start: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe('Optional first page to extract'),
+    page_end: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe('Optional last page to extract'),
+  },
+  async (args) => {
+    const taskId = `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    writeIpcFile(TASKS_DIR, {
+      type: 'extract_pdf_text',
+      source_path: args.source_path,
+      page_start: args.page_start,
+      page_end: args.page_end,
+      resultId: taskId,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const result = (await waitForTaskResult(taskId, 30000)) as {
+        success: boolean;
+        result?: unknown;
+        error?: string;
+      };
+      if (!result.success) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: result.error || 'PDF extraction failed',
+            },
+          ],
+          isError: true,
+        };
+      }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(result.result, null, 2),
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text:
+              err instanceof Error
+                ? err.message
+                : 'PDF extraction timed out',
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
 
 server.tool(
   'send_message',

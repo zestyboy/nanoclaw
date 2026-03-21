@@ -101,6 +101,10 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
 );
+export const NANOCLAW_PDF_EXTRACT_MAX_CHARS = parseInt(
+  process.env.NANOCLAW_PDF_EXTRACT_MAX_CHARS || '4000',
+  10,
+);
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
