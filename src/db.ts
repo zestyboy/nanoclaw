@@ -697,9 +697,7 @@ export function upsertSessionMetrics(
     session_id: patch.session_id ?? existing?.session_id ?? null,
     transcript_bytes: patch.transcript_bytes ?? existing?.transcript_bytes ?? 0,
     embedded_document_bytes:
-      patch.embedded_document_bytes ??
-      existing?.embedded_document_bytes ??
-      0,
+      patch.embedded_document_bytes ?? existing?.embedded_document_bytes ?? 0,
     largest_entry_bytes:
       patch.largest_entry_bytes ?? existing?.largest_entry_bytes ?? 0,
     top_embedded_files:
@@ -707,39 +705,39 @@ export function upsertSessionMetrics(
     last_input_tokens:
       patch.last_input_tokens !== undefined
         ? patch.last_input_tokens
-        : existing?.last_input_tokens ?? null,
+        : (existing?.last_input_tokens ?? null),
     last_output_tokens:
       patch.last_output_tokens !== undefined
         ? patch.last_output_tokens
-        : existing?.last_output_tokens ?? null,
+        : (existing?.last_output_tokens ?? null),
     last_total_cost_usd:
       patch.last_total_cost_usd !== undefined
         ? patch.last_total_cost_usd
-        : existing?.last_total_cost_usd ?? null,
+        : (existing?.last_total_cost_usd ?? null),
     last_model_usage:
       patch.last_model_usage !== undefined
         ? patch.last_model_usage
-        : existing?.last_model_usage ?? null,
+        : (existing?.last_model_usage ?? null),
     last_context_percent:
       patch.last_context_percent !== undefined
         ? patch.last_context_percent
-        : existing?.last_context_percent ?? null,
+        : (existing?.last_context_percent ?? null),
     last_rate_limit_utilization:
       patch.last_rate_limit_utilization !== undefined
         ? patch.last_rate_limit_utilization
-        : existing?.last_rate_limit_utilization ?? null,
+        : (existing?.last_rate_limit_utilization ?? null),
     rate_limit_status:
       patch.rate_limit_status !== undefined
         ? patch.rate_limit_status
-        : existing?.rate_limit_status ?? null,
+        : (existing?.rate_limit_status ?? null),
     rate_limit_type:
       patch.rate_limit_type !== undefined
         ? patch.rate_limit_type
-        : existing?.rate_limit_type ?? null,
+        : (existing?.rate_limit_type ?? null),
     rate_limit_resets_at:
       patch.rate_limit_resets_at !== undefined
         ? patch.rate_limit_resets_at
-        : existing?.rate_limit_resets_at ?? null,
+        : (existing?.rate_limit_resets_at ?? null),
     warned_thresholds:
       patch.warned_thresholds ?? existing?.warned_thresholds ?? [],
     updated_at: new Date().toISOString(),

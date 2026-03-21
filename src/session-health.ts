@@ -199,7 +199,9 @@ function buildThresholdKey(prefix: string, threshold: number): string {
   return `${prefix}:${threshold}`;
 }
 
-export function collectSessionWarnings(metrics: SessionMetrics): SessionWarning[] {
+export function collectSessionWarnings(
+  metrics: SessionMetrics,
+): SessionWarning[] {
   const warnings: SessionWarning[] = [];
   const warned = new Set(metrics.warned_thresholds);
 
@@ -271,7 +273,8 @@ export function summarizeTopEmbeddedFiles(
   return files
     .slice(0, limit)
     .map(
-      (file) => `${file.label} (${formatBytes(file.bytes)}, ${file.occurrences}x)`,
+      (file) =>
+        `${file.label} (${formatBytes(file.bytes)}, ${file.occurrences}x)`,
     )
     .join(', ');
 }

@@ -551,7 +551,11 @@ async function runAgent(
       setSession(group.folder, output.newSessionId);
     }
 
-    refreshSessionMetrics(group.folder, output.newSessionId ?? sessionId, output);
+    refreshSessionMetrics(
+      group.folder,
+      output.newSessionId ?? sessionId,
+      output,
+    );
 
     if (output.status === 'error') {
       // Clear stale session if the conversation was not found —
@@ -860,7 +864,10 @@ async function main(): Promise<void> {
       }
 
       if (command === 'context') {
-        const metrics = refreshSessionMetrics(group.folder, sessions[group.folder]);
+        const metrics = refreshSessionMetrics(
+          group.folder,
+          sessions[group.folder],
+        );
         const response = metrics
           ? formatContextReport(metrics)
           : 'No active session metrics yet.';

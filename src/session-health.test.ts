@@ -30,7 +30,10 @@ function writeTranscript(sessionId: string, lines: string[]): void {
     'test-project',
   );
   fs.mkdirSync(transcriptDir, { recursive: true });
-  fs.writeFileSync(path.join(transcriptDir, `${sessionId}.jsonl`), lines.join('\n'));
+  fs.writeFileSync(
+    path.join(transcriptDir, `${sessionId}.jsonl`),
+    lines.join('\n'),
+  );
 }
 
 describe('session-health', () => {

@@ -55,7 +55,9 @@ export function refreshSessionMetrics(
       output.rateLimitInfo.utilization ?? null;
     patch.rate_limit_status = output.rateLimitInfo.status;
     patch.rate_limit_type = output.rateLimitInfo.rateLimitType ?? null;
-    patch.rate_limit_resets_at = normalizeResetAt(output.rateLimitInfo.resetsAt);
+    patch.rate_limit_resets_at = normalizeResetAt(
+      output.rateLimitInfo.resetsAt,
+    );
   }
 
   if (Object.keys(patch).length === 0) {
