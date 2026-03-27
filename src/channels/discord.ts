@@ -469,6 +469,21 @@ export class DiscordChannel implements Channel {
     return channel.id;
   }
 
+  async deleteTextChannel(channelId: string): Promise<boolean> {
+    if (!this.client) throw new Error('Discord client not initialized');
+    try {
+      const channel = await this.client.channels.fetch(channelId);
+      if (channel) {
+        await channel.delete();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      logger.warn({ channelId, err }, 'Failed to delete Discord channel');
+      return false;
+    }
+  }
+
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
     if (!this.client || !isTyping) return;
     try {

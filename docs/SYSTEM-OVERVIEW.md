@@ -740,6 +740,7 @@ Agents communicate with the host via filesystem IPC. The agent writes a JSON tas
 | `schedule_task` | Any (own group), elevated (any group) | Schedule a recurring or one-time task |
 | `execute_in_group` | Elevated only | Dispatch work to another group's agent |
 | `create_project` | Elevated only | Create Discord channel + group folder + registration + projects.yaml entry (synchronous — blocks until complete, returns channel ID) |
+| `delete_project` | Elevated only | Delete Discord channel + group folder + registration + projects.yaml entry (synchronous — blocks until complete) |
 | `search_public_knowledge` | Any group | Search public knowledge vault via qmd |
 | `search_second_brain` | Any group | Search second brain vault via qmd |
 | `reindex_public_knowledge` | Elevated only | Trigger qmd reindex (fire-and-forget) |

@@ -35,6 +35,7 @@ import {
   getAllTasks,
   getMessagesSince,
   getNewMessages,
+  deleteRegisteredGroup,
   getRegisteredGroup,
   getRouterState,
   initDatabase,
@@ -842,6 +843,25 @@ async function main(): Promise<void> {
       writeGroupsSnapshot(gf, im, ag, rj),
     enqueueMessageCheck: (groupJid: string) =>
       queue.enqueueMessageCheck(groupJid),
+    deleteDiscordChannel: discordChannel
+      ? async (channelId: string) => {
+          try {
+            return await discordChannel.deleteTextChannel(channelId);
+          } catch (err) {
+            logger.error(
+              { err, channelId },
+              'Failed to delete Discord channel',
+            );
+            return false;
+          }
+        }
+      : undefined,
+    unregisterGroup: (jid: string) => {
+      delete registeredGroups[jid];
+      deleteRegisteredGroup(jid);
+      scheduleCanonicalSnapshot('unregister-group');
+      logger.info({ jid }, 'Group unregistered');
+    },
     createDiscordChannel: discordChannel
       ? async (name: string) => {
           const envVars = (await import('./env.js')).readEnvFile([

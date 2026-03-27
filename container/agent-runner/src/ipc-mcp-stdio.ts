@@ -570,6 +570,73 @@ server.tool(
 );
 
 server.tool(
+  'delete_project',
+  `Delete a project: removes the Discord channel, unregisters the group, removes the projects.yaml entry, and deletes the project folder. Elevated groups only. This is destructive and cannot be undone.`,
+  {
+    slug: z.string().describe('Project slug (e.g., "notion-second-brain")'),
+    discord_channel_id: z.string().optional().describe('Discord channel ID. If omitted, looked up from projects.yaml.'),
+  },
+  async (args) => {
+    if (!hasElevatedPrivilege()) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only elevated groups can delete projects.' }],
+        isError: true,
+      };
+    }
+
+    const resultId = `delete-project-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const data = {
+      type: 'delete_project',
+      slug: args.slug,
+      discord_channel_id: args.discord_channel_id,
+      resultId,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    const resultPath = path.join(IPC_DIR, 'input', `result-${resultId}.json`);
+    const maxWait = 30000;
+    const pollInterval = 300;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      if (fs.existsSync(resultPath)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(resultPath, 'utf-8'));
+          fs.unlinkSync(resultPath);
+          if (result.success) {
+            const actions = [];
+            if (result.deletedChannel) actions.push('Discord channel deleted');
+            if (result.unregisteredGroup) actions.push('group unregistered');
+            if (result.removedYamlEntry) actions.push('projects.yaml entry removed');
+            if (result.removedFolder) actions.push('project folder deleted');
+            return {
+              content: [{ type: 'text' as const, text: `Project "${args.slug}" deleted.\n\n${actions.join(', ')}.` }],
+            };
+          }
+          return {
+            content: [{ type: 'text' as const, text: result.error || `Failed to delete project "${args.slug}".` }],
+            isError: true,
+          };
+        } catch (err) {
+          return {
+            content: [{ type: 'text' as const, text: `Error reading deletion result: ${err}` }],
+            isError: true,
+          };
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: `Project "${args.slug}" deletion timed out.` }],
+      isError: true,
+    };
+  },
+);
+
+server.tool(
   'search_public_knowledge',
   `Search the public knowledge repository using qmd. Returns relevant documents and snippets. Only use when the user explicitly asks to search or pull from the public knowledge base.
 

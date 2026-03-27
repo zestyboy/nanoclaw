@@ -60,6 +60,8 @@ export interface IpcDeps {
   ) => void;
   enqueueMessageCheck: (groupJid: string) => void;
   createDiscordChannel?: (name: string) => Promise<string | null>;
+  deleteDiscordChannel?: (channelId: string) => Promise<boolean>;
+  unregisterGroup?: (jid: string) => void;
 }
 
 let ipcWatcherRunning = false;
@@ -343,6 +345,8 @@ export async function processTaskIpc(
     brief?: string;
     aliases?: string;
     host_path?: string;
+    // For delete_project
+    discord_channel_id?: string;
     // For search_public_knowledge / search_second_brain
     searches?: Array<{ type: string; query: string }>;
     intent?: string;
@@ -1117,6 +1121,63 @@ export async function processTaskIpc(
       break;
     }
 
+    case 'delete_project': {
+      if (!hasElevatedPrivilege(isMain, isTrusted)) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized delete_project attempt blocked',
+        );
+        break;
+      }
+      const deleteResultDir = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup.replace(/:/g, '_'),
+        'input',
+      );
+      fs.mkdirSync(deleteResultDir, { recursive: true });
+      const deleteResultFileName = data.resultId
+        ? `result-${data.resultId}.json`
+        : `result-${Date.now()}.json`;
+      const deleteResultPath = path.join(
+        deleteResultDir,
+        deleteResultFileName,
+      );
+
+      if (data.slug) {
+        try {
+          const deleteResult = await handleDeleteProject(
+            data as { slug: string; discord_channel_id?: string },
+            sourceGroup,
+            registeredGroups,
+            deps,
+          );
+          fs.writeFileSync(
+            deleteResultPath,
+            JSON.stringify({ success: true, ...deleteResult }),
+          );
+        } catch (err) {
+          logger.error({ err, slug: data.slug }, 'delete_project failed');
+          const errorMessage =
+            err instanceof Error ? err.message : String(err);
+          fs.writeFileSync(
+            deleteResultPath,
+            JSON.stringify({
+              success: false,
+              error: `Failed to delete project "${data.slug}": ${errorMessage}`,
+            }),
+          );
+        }
+      } else {
+        logger.warn({ data }, 'delete_project: missing slug');
+        fs.writeFileSync(
+          deleteResultPath,
+          JSON.stringify({ success: false, error: 'Missing required field: slug' }),
+        );
+      }
+      break;
+    }
+
     case 'activate_mirror': {
       if (!hasElevatedPrivilege(isMain, isTrusted)) {
         logger.warn(
@@ -1558,4 +1619,96 @@ async function handleCreateProject(
   );
 
   return { channelId, jid, folder };
+}
+
+async function handleDeleteProject(
+  data: { slug: string; discord_channel_id?: string },
+  sourceGroup: string,
+  registeredGroups: Record<string, RegisteredGroup>,
+  deps: IpcDeps,
+): Promise<{
+  removedFolder: boolean;
+  removedYamlEntry: boolean;
+  deletedChannel: boolean;
+  unregisteredGroup: boolean;
+}> {
+  const folder = `project:${data.slug}`;
+  const result = {
+    removedFolder: false,
+    removedYamlEntry: false,
+    deletedChannel: false,
+    unregisteredGroup: false,
+  };
+
+  // 1. Find and remove from projects.yaml
+  const projectOwnerFolder = resolveProjectOwnerFolder(
+    sourceGroup,
+    registeredGroups,
+  );
+  const projectOwnerDir = resolveGroupFolderPath(projectOwnerFolder);
+  const projectsYamlPath = path.join(projectOwnerDir, 'projects.yaml');
+
+  let channelId = data.discord_channel_id;
+
+  if (fs.existsSync(projectsYamlPath)) {
+    const existing = yaml.parse(fs.readFileSync(projectsYamlPath, 'utf-8'));
+    let projects: any[] = [];
+    if (Array.isArray(existing)) {
+      projects = existing;
+    } else if (existing?.projects && Array.isArray(existing.projects)) {
+      projects = existing.projects;
+    }
+
+    const entry = projects.find((p: any) => p.slug === data.slug);
+    if (entry && !channelId) {
+      channelId = entry.discord_channel_id;
+    }
+
+    const filtered = projects.filter((p: any) => p.slug !== data.slug);
+    if (filtered.length < projects.length) {
+      fs.writeFileSync(projectsYamlPath, yaml.stringify(filtered));
+      result.removedYamlEntry = true;
+    }
+  }
+
+  // 2. Delete the Discord channel
+  if (channelId && deps.deleteDiscordChannel) {
+    result.deletedChannel = await deps.deleteDiscordChannel(channelId);
+  }
+
+  // 3. Unregister the group
+  const jid = channelId ? `dc:${channelId}` : null;
+  if (!jid) {
+    // Try to find by folder
+    for (const [groupJid, group] of Object.entries(registeredGroups)) {
+      if (group.folder === folder) {
+        if (deps.unregisterGroup) {
+          deps.unregisterGroup(groupJid);
+          result.unregisteredGroup = true;
+        }
+        break;
+      }
+    }
+  } else if (registeredGroups[jid]) {
+    if (deps.unregisterGroup) {
+      deps.unregisterGroup(jid);
+      result.unregisteredGroup = true;
+    }
+  }
+
+  // 4. Remove the project folder
+  const projectDir = resolveGroupFolderPath(folder);
+  if (fs.existsSync(projectDir)) {
+    fs.rmSync(projectDir, { recursive: true });
+    result.removedFolder = true;
+  }
+
+  scheduleCanonicalSnapshot('delete-project');
+
+  logger.info(
+    { slug: data.slug, channelId, ...result },
+    'Project deleted',
+  );
+
+  return result;
 }

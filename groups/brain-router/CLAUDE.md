@@ -121,6 +121,16 @@ When no match found and user confirms (or provides "new project: ..." details):
 6. The tool blocks until the host finishes — it returns the `discord_channel_id`, `jid`, and `folder` directly. Use these values in your response (no need to re-read projects.yaml).
 7. Then catalog or execute the original message to the new project using the returned folder
 
+## Project Deletion
+
+Use `mcp__nanoclaw__delete_project` to fully remove a project. This is destructive and cannot be undone. The tool:
+1. Removes the entry from projects.yaml
+2. Deletes the Discord channel
+3. Unregisters the group from the host
+4. Deletes the project folder and all its contents
+
+Only delete when the user explicitly asks. Confirm what will be removed before proceeding.
+
 ## Public Knowledge Mode
 
 The public knowledge repository is a work-related Obsidian vault at `/workspace/public-knowledge`. It's shareable and geared towards work content.
