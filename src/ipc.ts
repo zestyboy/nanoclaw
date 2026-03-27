@@ -114,9 +114,15 @@ async function qmdTwoTierSearch(
       );
       return bm25Results;
     }
-    logger.info({ collection }, 'QMD BM25 returned no results, falling back to hybrid');
+    logger.info(
+      { collection },
+      'QMD BM25 returned no results, falling back to hybrid',
+    );
   } catch (err) {
-    logger.warn({ err, collection }, 'QMD BM25 search failed, falling back to hybrid');
+    logger.warn(
+      { err, collection },
+      'QMD BM25 search failed, falling back to hybrid',
+    );
   }
 
   // Tier 2: Full hybrid query (expansion + embeddings + reranking)
@@ -1078,8 +1084,7 @@ export async function processTaskIpc(
           );
         } catch (err) {
           logger.error({ err, slug: data.slug }, 'create_project failed');
-          const errorMessage =
-            err instanceof Error ? err.message : String(err);
+          const errorMessage = err instanceof Error ? err.message : String(err);
           // Write error result back to the container agent
           fs.writeFileSync(
             createResultPath,
