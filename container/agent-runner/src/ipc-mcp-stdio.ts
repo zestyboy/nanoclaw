@@ -569,7 +569,7 @@ Combine multiple search types for best recall. The first search gets 2x weight.`
 
     // Poll for result in IPC input directory
     const resultPath = path.join(IPC_DIR, 'input', `result-${taskId}.json`);
-    const maxWait = 15000;
+    const maxWait = 60000;
     const pollInterval = 200;
     const startTime = Date.now();
 
@@ -662,7 +662,7 @@ Combine multiple search types for best recall. The first search gets 2x weight.`
     writeIpcFile(TASKS_DIR, data);
 
     const resultPath = path.join(IPC_DIR, 'input', `result-${taskId}.json`);
-    const maxWait = 15000;
+    const maxWait = 60000;
     const pollInterval = 200;
     const startTime = Date.now();
 
