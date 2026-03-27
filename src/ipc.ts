@@ -1139,10 +1139,7 @@ export async function processTaskIpc(
       const deleteResultFileName = data.resultId
         ? `result-${data.resultId}.json`
         : `result-${Date.now()}.json`;
-      const deleteResultPath = path.join(
-        deleteResultDir,
-        deleteResultFileName,
-      );
+      const deleteResultPath = path.join(deleteResultDir, deleteResultFileName);
 
       if (data.slug) {
         try {
@@ -1158,8 +1155,7 @@ export async function processTaskIpc(
           );
         } catch (err) {
           logger.error({ err, slug: data.slug }, 'delete_project failed');
-          const errorMessage =
-            err instanceof Error ? err.message : String(err);
+          const errorMessage = err instanceof Error ? err.message : String(err);
           fs.writeFileSync(
             deleteResultPath,
             JSON.stringify({
@@ -1172,7 +1168,10 @@ export async function processTaskIpc(
         logger.warn({ data }, 'delete_project: missing slug');
         fs.writeFileSync(
           deleteResultPath,
-          JSON.stringify({ success: false, error: 'Missing required field: slug' }),
+          JSON.stringify({
+            success: false,
+            error: 'Missing required field: slug',
+          }),
         );
       }
       break;
@@ -1705,10 +1704,7 @@ async function handleDeleteProject(
 
   scheduleCanonicalSnapshot('delete-project');
 
-  logger.info(
-    { slug: data.slug, channelId, ...result },
-    'Project deleted',
-  );
+  logger.info({ slug: data.slug, channelId, ...result }, 'Project deleted');
 
   return result;
 }
