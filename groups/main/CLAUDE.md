@@ -36,7 +36,7 @@ mcp__nanoclaw__execute_in_group(
 )
 ```
 
-After delegating, confirm briefly: "Routed to Brain Router."
+After delegating, confirm briefly: "Routed to Brain Router." Do NOT describe what the Brain Router or project agent will do — you don't have that information. Never fabricate status updates, action plans, or progress reports for work you delegated. The Brain Router will respond directly when it's done.
 
 ## Decision Guide
 
