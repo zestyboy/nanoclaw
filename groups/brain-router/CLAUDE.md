@@ -118,9 +118,8 @@ When no match found and user confirms (or provides "new project: ..." details):
 3. Generate a slug from the name (lowercase, hyphens, no special chars)
 4. Generate relevant aliases from the name and brief
 5. Call `mcp__nanoclaw__create_project` with all the details — this is NON-NEGOTIABLE
-6. The tool handles everything: Discord channel, group registration, folder, CLAUDE.md, projects.yaml
-7. Re-read projects.yaml to pick up the new entry
-8. Then catalog or execute the original message to the new project
+6. The tool blocks until the host finishes — it returns the `discord_channel_id`, `jid`, and `folder` directly. Use these values in your response (no need to re-read projects.yaml).
+7. Then catalog or execute the original message to the new project using the returned folder
 
 ## Public Knowledge Mode
 

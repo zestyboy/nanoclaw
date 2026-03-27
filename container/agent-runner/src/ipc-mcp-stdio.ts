@@ -518,6 +518,7 @@ server.tool(
       };
     }
 
+    const resultId = `create-project-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const data = {
       type: 'create_project',
       name: args.name,
@@ -525,13 +526,45 @@ server.tool(
       projectType: args.type,
       brief: args.brief,
       aliases: args.aliases,
+      resultId,
       timestamp: new Date().toISOString(),
     };
 
     writeIpcFile(TASKS_DIR, data);
 
+    // Poll for result — host writes back channel_id and folder after creation
+    const resultPath = path.join(IPC_DIR, 'input', `result-${resultId}.json`);
+    const maxWait = 30000;
+    const pollInterval = 300;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      if (fs.existsSync(resultPath)) {
+        try {
+          const result = JSON.parse(fs.readFileSync(resultPath, 'utf-8'));
+          fs.unlinkSync(resultPath);
+          if (result.success) {
+            return {
+              content: [{ type: 'text' as const, text: `Project "${args.name}" created successfully.\n\nDiscord channel ID: ${result.discord_channel_id}\nChannel JID: ${result.jid}\nGroup folder: ${result.folder}\nSlug: ${args.slug}` }],
+            };
+          }
+          return {
+            content: [{ type: 'text' as const, text: result.error || `Failed to create project "${args.name}".` }],
+            isError: true,
+          };
+        } catch (err) {
+          return {
+            content: [{ type: 'text' as const, text: `Error reading project creation result: ${err}` }],
+            isError: true,
+          };
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+
     return {
-      content: [{ type: 'text' as const, text: `Project "${args.name}" creation requested. Watch for confirmation message.` }],
+      content: [{ type: 'text' as const, text: `Project "${args.name}" creation timed out. The project may still be created — check Discord and projects.yaml.` }],
+      isError: true,
     };
   },
 );

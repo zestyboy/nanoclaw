@@ -164,13 +164,18 @@ Slash prefixes (`/catalog`, `/execute`, `/knowledge`, `/second-brain`, `/ask`) o
 
 ### Project Creation
 
-The `create_project` MCP tool handles everything atomically:
+The `create_project` MCP tool is **synchronous** — the container agent blocks until the host completes creation and returns the result. This prevents race conditions where the agent would try to use the project (e.g., `execute_in_group`) before it exists.
+
+Steps performed by the host:
 1. Creates a Discord text channel (in a configured category)
 2. Registers the group with NanoClaw
 3. Creates the group folder with CLAUDE.md (from templates) and notes.md
 4. Adds the entry to projects.yaml
+5. Returns `{ discord_channel_id, jid, folder }` to the calling agent
 
-Projects are preferrably not created manually — generally through the tool.
+The agent receives the channel ID and folder directly from the tool response — no need to re-read `projects.yaml`. This ensures channel links (`<#id>`) resolve correctly in Discord and subsequent `execute_in_group` calls target a group that is already registered.
+
+Projects are preferably not created manually — generally through the tool.
 
 ### Projects Registry
 
@@ -734,7 +739,7 @@ Agents communicate with the host via filesystem IPC. The agent writes a JSON tas
 | `send_message` | Any (own JID), elevated (any JID) | Send a message to a chat |
 | `schedule_task` | Any (own group), elevated (any group) | Schedule a recurring or one-time task |
 | `execute_in_group` | Elevated only | Dispatch work to another group's agent |
-| `create_project` | Elevated only | Create Discord channel + group folder + registration + projects.yaml entry |
+| `create_project` | Elevated only | Create Discord channel + group folder + registration + projects.yaml entry (synchronous — blocks until complete, returns channel ID) |
 | `search_public_knowledge` | Any group | Search public knowledge vault via qmd |
 | `search_second_brain` | Any group | Search second brain vault via qmd |
 | `reindex_public_knowledge` | Elevated only | Trigger qmd reindex (fire-and-forget) |
@@ -785,7 +790,7 @@ If `source_jid` is omitted, `activate_mirror` uses the current Brain Router chat
 **Implementation:** `src/mirror.ts` (state management), `src/ipc.ts` (IPC handlers), `src/index.ts` (outbound hooks + reply target selection), `src/channels/discord.ts` (silent mirror sends)
 
 **Project registry note:**
-- `create_project` writes the canonical project registry to Brain Router's project owner folder when that group exists. This prevents a split-brain state where the Discord project channel exists but Brain Router cannot resolve the project from `projects.yaml`.
+- `create_project` is synchronous — the agent blocks until the host completes the operation and returns `{ discord_channel_id, jid, folder }`. This prevents race conditions where the agent uses a project before it exists (e.g., calling `execute_in_group` immediately after creation). The host writes the canonical project registry to Brain Router's project owner folder, preventing a split-brain state where the Discord channel exists but Brain Router cannot resolve the project from `projects.yaml`.
 
 ### IPC Flow (execute_in_group example)
 

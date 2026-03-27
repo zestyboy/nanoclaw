@@ -44,3 +44,4 @@ nanoclaw.db
 .nanoclaw/
 
 agents-sdk-docs
+.gstack/

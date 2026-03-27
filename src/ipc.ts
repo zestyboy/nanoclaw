@@ -1031,7 +1031,7 @@ export async function processTaskIpc(
       break;
     }
 
-    case 'create_project':
+    case 'create_project': {
       if (!hasElevatedPrivilege(isMain, isTrusted)) {
         logger.warn(
           { sourceGroup },
@@ -1039,9 +1039,22 @@ export async function processTaskIpc(
         );
         break;
       }
+      // Result directory for synchronous feedback to the container agent
+      const createResultDir = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup.replace(/:/g, '_'),
+        'input',
+      );
+      fs.mkdirSync(createResultDir, { recursive: true });
+      const createResultFileName = data.resultId
+        ? `result-${data.resultId}.json`
+        : `result-${Date.now()}.json`;
+      const createResultPath = path.join(createResultDir, createResultFileName);
+
       if (data.name && data.slug && data.projectType && data.brief) {
         try {
-          await handleCreateProject(
+          const projectResult = await handleCreateProject(
             data as {
               name: string;
               slug: string;
@@ -1053,23 +1066,51 @@ export async function processTaskIpc(
             registeredGroups,
             deps,
           );
+          // Write success result back to the container agent
+          fs.writeFileSync(
+            createResultPath,
+            JSON.stringify({
+              success: true,
+              discord_channel_id: projectResult.channelId,
+              jid: projectResult.jid,
+              folder: projectResult.folder,
+            }),
+          );
         } catch (err) {
           logger.error({ err, slug: data.slug }, 'create_project failed');
-          // Try to notify the main group of the failure
+          const errorMessage =
+            err instanceof Error ? err.message : String(err);
+          // Write error result back to the container agent
+          fs.writeFileSync(
+            createResultPath,
+            JSON.stringify({
+              success: false,
+              error: `Failed to create project "${data.name}": ${errorMessage}`,
+            }),
+          );
+          // Also notify the main group
           const mainJid = Object.entries(registeredGroups).find(
             ([, g]) => g.isMain,
           )?.[0];
           if (mainJid) {
             await deps.sendMessage(
               mainJid,
-              `Failed to create project "${data.name}": ${err instanceof Error ? err.message : String(err)}`,
+              `Failed to create project "${data.name}": ${errorMessage}`,
             );
           }
         }
       } else {
         logger.warn({ data }, 'create_project: missing required fields');
+        fs.writeFileSync(
+          createResultPath,
+          JSON.stringify({
+            success: false,
+            error: 'Missing required fields (name, slug, projectType, brief)',
+          }),
+        );
       }
       break;
+    }
 
     case 'activate_mirror': {
       if (!hasElevatedPrivilege(isMain, isTrusted)) {
@@ -1393,7 +1434,7 @@ async function handleCreateProject(
   sourceGroup: string,
   registeredGroups: Record<string, RegisteredGroup>,
   deps: IpcDeps,
-): Promise<void> {
+): Promise<{ channelId: string; jid: string; folder: string }> {
   const envVars = readEnvFile([
     'DISCORD_GUILD_ID',
     'DISCORD_PROJECT_CATEGORY_ID',
@@ -1510,4 +1551,6 @@ async function handleCreateProject(
     { name: data.name, slug: data.slug, channelId, folder },
     'Project created successfully',
   );
+
+  return { channelId, jid, folder };
 }
