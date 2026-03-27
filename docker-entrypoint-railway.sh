@@ -73,6 +73,32 @@ RCLONE
   done) &
 fi
 
+# Start QMD MCP HTTP server (models stay loaded between searches).
+# This gives sub-second semantic search instead of 10-30s cold CLI invocations.
+QMD_HTTP_PORT="${QMD_HTTP_PORT:-7862}"
+echo "Starting QMD MCP HTTP server on port $QMD_HTTP_PORT..."
+gosu node qmd mcp --http --port "$QMD_HTTP_PORT" > /tmp/qmd-mcp.log 2>&1 &
+QMD_PID=$!
+
+# Wait for QMD HTTP server to accept connections (up to 30s)
+QMD_READY=false
+for i in $(seq 1 30); do
+  if curl -sf -o /dev/null -X POST "http://localhost:$QMD_HTTP_PORT/mcp" \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json, text/event-stream" \
+    -d '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"healthcheck","version":"1.0"}}}' 2>/dev/null; then
+    echo "QMD MCP HTTP server ready (pid $QMD_PID, port $QMD_HTTP_PORT)"
+    QMD_READY=true
+    break
+  fi
+  sleep 1
+done
+
+if [ "$QMD_READY" = "false" ]; then
+  echo "Warning: QMD MCP HTTP server did not start in 30s. Search will fall back to CLI."
+  echo "QMD log:" && cat /tmp/qmd-mcp.log 2>/dev/null || true
+fi
+
 # Verify Railway state before starting the host process.
 VERIFY_ARGS="--mode boot"
 if [ "$STATE_VERIFY_ENFORCE" = "true" ]; then
