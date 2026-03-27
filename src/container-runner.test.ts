@@ -8,9 +8,8 @@ const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
 // Mock config
 vi.mock('./config.js', async () => {
-  const actual = await vi.importActual<typeof import('./config.js')>(
-    './config.js',
-  );
+  const actual =
+    await vi.importActual<typeof import('./config.js')>('./config.js');
   return {
     ...actual,
     CONTAINER_IMAGE: 'nanoclaw-agent:latest',

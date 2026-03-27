@@ -58,7 +58,9 @@ describe('clearActiveSession', () => {
   });
 
   it('removes persisted Claude session files', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-session-clear-'));
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'nanoclaw-session-clear-'),
+    );
     const sessionDir = path.join(root, 'main');
     fs.mkdirSync(path.join(sessionDir, '.claude', 'projects'), {
       recursive: true,

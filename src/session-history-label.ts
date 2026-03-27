@@ -13,10 +13,14 @@ function decodeXmlEntities(text: string): string {
   );
 }
 
-export function sanitizeSessionHistoryPrompt(prompt: string | null): string | null {
+export function sanitizeSessionHistoryPrompt(
+  prompt: string | null,
+): string | null {
   if (!prompt) return null;
 
-  const matches = [...prompt.matchAll(/<message\b[^>]*>([\s\S]*?)<\/message>/g)];
+  const matches = [
+    ...prompt.matchAll(/<message\b[^>]*>([\s\S]*?)<\/message>/g),
+  ];
   if (matches.length > 0) {
     const combined = matches
       .map((match) => decodeXmlEntities(match[1].trim()))
