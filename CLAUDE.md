@@ -33,6 +33,29 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch |
 | `/get-qodo-rules` | Load org- and repo-level coding rules from Qodo before code tasks |
 
+## Deployment Workflow
+
+Railway auto-deploys from GitHub branches:
+
+| Environment | Branch | Auto-deploys |
+|-------------|--------|-------------|
+| **dev** | `dev` | Yes — on push to `dev` |
+| **production** | `main` | Yes — on push to `main` |
+
+**Standard flow:**
+1. Create a feature branch from `main` (e.g., `feat/my-feature`)
+2. Do work, commit
+3. Merge to `dev` → Railway dev auto-deploys → test on dev
+4. Once verified, merge `dev` to `main` → Railway production auto-deploys
+
+**Quick commands:**
+```bash
+git checkout dev && git merge feat/my-feature && git push origin dev  # deploy to dev
+git checkout main && git merge dev && git push origin main            # promote to prod
+```
+
+Don't push directly to `main` without testing on dev first. Use `railway up --detach -s nanoclaw` for one-off CLI deploys if needed (e.g., hotfixes).
+
 ## Development
 
 Run commands directly—don't tell the user to run them.
