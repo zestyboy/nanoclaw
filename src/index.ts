@@ -91,7 +91,15 @@ import {
   formatContextReport,
   mergeWarnedThresholds,
 } from './session-health.js';
+import {
+  formatSessionHistoryLabel,
+  sanitizeSessionHistoryPrompt,
+} from './session-history-label.js';
 import { refreshSessionMetrics } from './session-metrics.js';
+import {
+  clearActiveSession,
+  resetGroupSessionFilesystem,
+} from './session-clear.js';
 
 const execAsync = promisify(execCb);
 
@@ -514,7 +522,7 @@ async function runAgent(
           recordSessionHistory(
             group.folder,
             output.newSessionId,
-            prompt.slice(0, 200),
+            sanitizeSessionHistoryPrompt(prompt)?.slice(0, 200),
           );
         }
         if (output.usage) {
@@ -676,9 +684,22 @@ async function startMessageLoop(): Promise<void> {
             (m) => m.content.trim().toLowerCase() === '/clear',
           );
           if (clearMsg) {
-            clearSessionState(group.folder);
-            lastAgentTimestamp[chatJid] = clearMsg.timestamp;
-            saveState();
+            clearActiveSession(
+              {
+                chatJid,
+                groupFolder: group.folder,
+                timestamp: clearMsg.timestamp,
+              },
+              {
+                closeStdin: (jid) => queue.closeStdin(jid),
+                clearSessionState,
+                resetSessionFilesystem: resetGroupSessionFilesystem,
+                saveState,
+                setLastAgentTimestamp: (jid, timestamp) => {
+                  lastAgentTimestamp[jid] = timestamp;
+                },
+              },
+            );
             channel
               .sendMessage(chatJid, 'Session cleared.')
               .catch((err) =>
@@ -850,9 +871,22 @@ async function main(): Promise<void> {
       }
 
       if (command === 'clear') {
-        clearSessionState(group.folder);
-        lastAgentTimestamp[chatJid] = new Date().toISOString();
-        saveState();
+        clearActiveSession(
+          {
+            chatJid,
+            groupFolder: group.folder,
+            timestamp: new Date().toISOString(),
+          },
+          {
+            closeStdin: (jid) => queue.closeStdin(jid),
+            clearSessionState,
+            resetSessionFilesystem: resetGroupSessionFilesystem,
+            saveState,
+            setLastAgentTimestamp: (jid, timestamp) => {
+              lastAgentTimestamp[jid] = timestamp;
+            },
+          },
+        );
         respond('Session cleared.').catch((err) =>
           logger.warn(
             { chatJid, err },
@@ -994,10 +1028,7 @@ async function main(): Promise<void> {
           const activeSessionId = sessions[group.folder];
           const lines = history.map((h, i) => {
             const active = h.session_id === activeSessionId ? ' ← active' : '';
-            const name =
-              h.name ||
-              h.first_prompt?.slice(0, 40) ||
-              h.session_id.slice(0, 8);
+            const name = formatSessionHistoryLabel(h);
             const date = h.last_used.split('T')[0];
             return `${i + 1}. **${name}** (${date})${active}`;
           });
