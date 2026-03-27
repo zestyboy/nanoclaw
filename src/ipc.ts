@@ -75,10 +75,75 @@ const QMD_QUERY_TIMEOUT_MS = parsePositiveInt(
   process.env.QMD_QUERY_TIMEOUT_MS,
   DEFAULT_QMD_QUERY_TIMEOUT_MS,
 );
+const QMD_BM25_TIMEOUT_MS = parsePositiveInt(
+  process.env.QMD_BM25_TIMEOUT_MS,
+  10_000,
+);
 const QMD_QUERY_CANDIDATE_LIMIT = parsePositiveInt(
   process.env.QMD_QUERY_CANDIDATE_LIMIT,
   DEFAULT_QMD_CANDIDATE_LIMIT,
 );
+
+/**
+ * Two-tier QMD search: try BM25 first (fast), fall back to hybrid query
+ * only if BM25 returns no results.
+ */
+async function qmdTwoTierSearch(
+  collection: string,
+  searches: Array<{ type: string; query: string }>,
+  intent: string | undefined,
+  limit: number,
+): Promise<unknown[]> {
+  const { execFileSync } = await import('child_process');
+
+  // Build a plain-text keyword query for BM25 from all search terms
+  const bm25Query = searches.map((s) => s.query).join(' ');
+
+  // Tier 1: BM25 keyword search (no LLM, no embeddings, no reranking)
+  try {
+    const bm25Output = execFileSync(
+      'qmd',
+      ['search', bm25Query, '--json', '-c', collection, '-n', String(limit)],
+      { cwd: DATA_DIR, encoding: 'utf-8', timeout: QMD_BM25_TIMEOUT_MS },
+    );
+    const bm25Results = JSON.parse(bm25Output);
+    if (Array.isArray(bm25Results) && bm25Results.length > 0) {
+      logger.info(
+        { collection, resultCount: bm25Results.length },
+        'QMD BM25 search returned results, skipping hybrid',
+      );
+      return bm25Results;
+    }
+    logger.info({ collection }, 'QMD BM25 returned no results, falling back to hybrid');
+  } catch (err) {
+    logger.warn({ err, collection }, 'QMD BM25 search failed, falling back to hybrid');
+  }
+
+  // Tier 2: Full hybrid query (expansion + embeddings + reranking)
+  const queryLines: string[] = [];
+  if (intent) queryLines.push(`intent: ${intent}`);
+  for (const s of searches) {
+    queryLines.push(`${s.type}: ${s.query}`);
+  }
+  const queryDoc = queryLines.join('\n');
+
+  const output = execFileSync(
+    'qmd',
+    [
+      'query',
+      queryDoc,
+      '--json',
+      '-c',
+      collection,
+      '-n',
+      String(limit),
+      '-C',
+      String(QMD_QUERY_CANDIDATE_LIMIT),
+    ],
+    { cwd: DATA_DIR, encoding: 'utf-8', timeout: QMD_QUERY_TIMEOUT_MS },
+  );
+  return JSON.parse(output) as unknown[];
+}
 
 function inferChannelFromJid(jid: string): string | undefined {
   if (jid.startsWith('dc:')) return 'discord';
@@ -777,35 +842,12 @@ export async function processTaskIpc(
         ? `result-${taskResultId}.json`
         : `result-${Date.now()}.json`;
       try {
-        // Build qmd structured query document from searches array
-        const queryLines: string[] = [];
-        if (intent) queryLines.push(`intent: ${intent}`);
-        for (const s of searches) {
-          queryLines.push(`${s.type}: ${s.query}`);
-        }
-        const queryDoc = queryLines.join('\n');
-
-        const { execFileSync } = await import('child_process');
-        const output = execFileSync(
-          'qmd',
-          [
-            'query',
-            queryDoc,
-            '--json',
-            '-c',
-            'public-knowledge',
-            '-n',
-            String(limit),
-            '-C',
-            String(QMD_QUERY_CANDIDATE_LIMIT),
-          ],
-          {
-            cwd: DATA_DIR,
-            encoding: 'utf-8',
-            timeout: QMD_QUERY_TIMEOUT_MS,
-          },
+        const results = await qmdTwoTierSearch(
+          'public-knowledge',
+          searches,
+          intent,
+          limit,
         );
-        const results = JSON.parse(output);
         fs.writeFileSync(
           path.join(resultDir, resultFileName),
           JSON.stringify({ success: true, results }),
@@ -871,34 +913,12 @@ export async function processTaskIpc(
         ? `result-${sbResultId}.json`
         : `result-${Date.now()}.json`;
       try {
-        const queryLines: string[] = [];
-        if (intent) queryLines.push(`intent: ${intent}`);
-        for (const s of searches) {
-          queryLines.push(`${s.type}: ${s.query}`);
-        }
-        const queryDoc = queryLines.join('\n');
-
-        const { execFileSync } = await import('child_process');
-        const output = execFileSync(
-          'qmd',
-          [
-            'query',
-            queryDoc,
-            '--json',
-            '-c',
-            'second-brain',
-            '-n',
-            String(limit),
-            '-C',
-            String(QMD_QUERY_CANDIDATE_LIMIT),
-          ],
-          {
-            cwd: DATA_DIR,
-            encoding: 'utf-8',
-            timeout: QMD_QUERY_TIMEOUT_MS,
-          },
+        const results = await qmdTwoTierSearch(
+          'second-brain',
+          searches,
+          intent,
+          limit,
         );
-        const results = JSON.parse(output);
         fs.writeFileSync(
           path.join(sbResultDir, sbResultFileName),
           JSON.stringify({ success: true, results }),
