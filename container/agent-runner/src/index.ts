@@ -30,6 +30,7 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   effortLevel?: string;
+  model?: string;
 }
 
 interface ContainerOutput {
@@ -497,6 +498,7 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
+      model: containerInput.model || undefined,
       effort: containerInput.effortLevel as 'low' | 'medium' | 'high' | undefined,
       systemPrompt: globalClaudeMd
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
@@ -664,6 +666,7 @@ async function main(): Promise<void> {
         prompt: trimmedPrompt,
         options: {
           cwd: compactCwd,
+          model: containerInput.model || undefined,
           resume: sessionId,
           systemPrompt: undefined,
           allowedTools: [],

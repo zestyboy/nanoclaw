@@ -55,6 +55,7 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   effortLevel?: string;
+  model?: string;
 }
 
 export interface ContainerOutput {

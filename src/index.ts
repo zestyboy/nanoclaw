@@ -7,6 +7,7 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   IS_RAILWAY,
+  NANOCLAW_MODEL,
   POLL_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
@@ -566,6 +567,7 @@ async function runAgent(
         isTrusted,
         assistantName: ASSISTANT_NAME,
         effortLevel,
+        model: NANOCLAW_MODEL,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
