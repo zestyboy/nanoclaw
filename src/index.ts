@@ -944,9 +944,9 @@ async function main(): Promise<void> {
           group.folder,
           sessions[group.folder],
         );
-        const effort = getGroupEffort(group.folder) || 'default';
-        const model = NANOCLAW_MODEL || 'default (sonnet)';
-        const contextLines = [`Model: ${model}`, `Effort: ${effort}`];
+        const effort = getGroupEffort(group.folder) || 'medium';
+        const model = NANOCLAW_MODEL || 'sonnet';
+        const contextLines = [`Model: **${model}**`, `Effort: **${effort}**`];
         if (metrics) {
           contextLines.push(formatContextReport(metrics));
         } else {

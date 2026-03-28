@@ -294,9 +294,27 @@ export function summarizeTopEmbeddedFiles(
     .join(', ');
 }
 
+function formatTokenCount(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`;
+  return String(tokens);
+}
+
 export function formatContextReport(metrics: SessionMetrics): string {
+  const contextWindow = metrics.last_model_usage
+    ? Math.max(
+        0,
+        ...Object.values(metrics.last_model_usage).map(
+          (mu) => mu.contextWindow || 0,
+        ),
+      )
+    : 0;
+
   const lines = [
     `Session: ${metrics.session_id || 'none'}`,
+    ...(contextWindow > 0
+      ? [`Context Window: ${formatTokenCount(contextWindow)}`]
+      : []),
     `Transcript: ${formatBytes(metrics.transcript_bytes)}`,
     `Embedded PDFs: ${formatBytes(metrics.embedded_document_bytes)}`,
     `Largest Entry: ${formatBytes(metrics.largest_entry_bytes)}`,
