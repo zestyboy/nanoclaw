@@ -534,14 +534,19 @@ async function runAgent(
         }
         if (output.controlResponse?.type === 'branch') {
           const branchSessionId = output.controlResponse.sessionId as string;
-          const branchTitle = (output.controlResponse.title as string) || undefined;
+          const branchTitle =
+            (output.controlResponse.title as string) || undefined;
           if (branchSessionId) {
             recordSessionHistory(group.folder, branchSessionId, branchTitle);
             if (branchTitle) {
               renameSession(group.folder, branchSessionId, branchTitle);
             }
             logger.info(
-              { group: group.name, sessionId: branchSessionId, title: branchTitle },
+              {
+                group: group.name,
+                sessionId: branchSessionId,
+                title: branchTitle,
+              },
               'Session branched via IPC',
             );
           }
@@ -885,6 +890,28 @@ async function main(): Promise<void> {
         return;
       }
 
+      if (command === 'compact') {
+        // Inject /compact as a synthetic message so the session command
+        // interception flow handles it (auth, pre-compact processing, SDK call).
+        const compactText = args.trim()
+          ? `/compact ${args.trim()}`
+          : '/compact';
+        queue.closeStdin(chatJid);
+        const now = new Date().toISOString();
+        storeMessage({
+          id: `compact-${Date.now()}`,
+          chat_jid: chatJid,
+          sender: 'me',
+          sender_name: 'me',
+          content: compactText,
+          timestamp: now,
+          is_from_me: true,
+        });
+        queue.enqueueMessageCheck(chatJid);
+        respond('Compacting session...').catch(() => {});
+        return;
+      }
+
       if (command === 'clear') {
         clearActiveSession(
           {
@@ -1032,10 +1059,7 @@ async function main(): Promise<void> {
         }
         renameSession(group.folder, sessionId, name);
         respond(`Session renamed to "${name}".`).catch(() => {});
-        logger.info(
-          { group: group.name, name },
-          'Session renamed',
-        );
+        logger.info({ group: group.name, name }, 'Session renamed');
         return;
       }
 
@@ -1114,7 +1138,9 @@ async function main(): Promise<void> {
       if (command === 'hooks') {
         // Show active hook configurations
         const hooks: string[] = [];
-        hooks.push('• **PreCompact** — Archives conversation transcript before compaction');
+        hooks.push(
+          '• **PreCompact** — Archives conversation transcript before compaction',
+        );
 
         // Check for group-level hooks in CLAUDE.md
         const groupClaudeMd = path.join(GROUPS_DIR, group.folder, 'CLAUDE.md');
@@ -1129,7 +1155,9 @@ async function main(): Promise<void> {
         }
 
         // Check for MCP server (always active)
-        hooks.push('• **MCP nanoclaw** — IPC tools for task scheduling, knowledge, and browser');
+        hooks.push(
+          '• **MCP nanoclaw** — IPC tools for task scheduling, knowledge, and browser',
+        );
 
         respond(`**Active hooks:**\n${hooks.join('\n')}`).catch(() => {});
         return;
@@ -1163,7 +1191,9 @@ async function main(): Promise<void> {
           const formatted = skills
             .map((s) => `• **${s.name}** — ${s.description}`)
             .join('\n');
-          respond(`**Available skills (${skills.length}):**\n${formatted}`).catch(() => {});
+          respond(
+            `**Available skills (${skills.length}):**\n${formatted}`,
+          ).catch(() => {});
         } catch {
           respond('Failed to read skills.').catch(() => {});
         }
@@ -1184,9 +1214,7 @@ async function main(): Promise<void> {
         });
         if (sent) {
           respond(
-            title
-              ? `Creating branch "${title}"...`
-              : 'Creating branch...',
+            title ? `Creating branch "${title}"...` : 'Creating branch...',
           ).catch(() => {});
         } else {
           respond(

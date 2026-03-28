@@ -1060,6 +1060,7 @@ describe('DiscordChannel', () => {
         '/applications/999888777/commands',
         expect.objectContaining({
           body: expect.arrayContaining([
+            expect.objectContaining({ name: 'compact' }),
             expect.objectContaining({ name: 'clear' }),
             expect.objectContaining({ name: 'context' }),
             expect.objectContaining({ name: 'reload' }),
@@ -1083,7 +1084,7 @@ describe('DiscordChannel', () => {
       );
       // Verify total count matches registered commands
       const body = mockRestPut.mock.calls[0][1].body;
-      expect(body).toHaveLength(18);
+      expect(body).toHaveLength(19);
     });
 
     it('registers interactionCreate handler on connect', async () => {

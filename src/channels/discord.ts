@@ -504,6 +504,15 @@ export class DiscordChannel implements Channel {
   private async registerSlashCommands(applicationId: string): Promise<void> {
     const commands = [
       new SlashCommandBuilder()
+        .setName('compact')
+        .setDescription('Compact conversation context')
+        .addStringOption((opt) =>
+          opt
+            .setName('message')
+            .setDescription('Focus instructions — what to preserve (optional)')
+            .setRequired(false),
+        ),
+      new SlashCommandBuilder()
         .setName('clear')
         .setDescription('Clear the current session context'),
       new SlashCommandBuilder()
