@@ -543,8 +543,10 @@ export class DiscordChannel implements Channel {
             .setRequired(false),
         ),
       new SlashCommandBuilder()
-        .setName('work')
-        .setDescription('List or switch sessions')
+        .setName('resume')
+        .setDescription(
+          'Resume a session by number or name, or list all sessions',
+        )
         .addStringOption((opt) =>
           opt
             .setName('message')

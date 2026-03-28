@@ -11,8 +11,8 @@ Quick reference for all slash commands available in Discord.
 | `/clear` | Wipe session context and start fresh. Also works as a text message. |
 | `/compact [instructions]` | Compact conversation context. Optional instructions guide what to preserve (e.g., `/compact keep the auth flow context`). |
 | `/rename [name]` | Name the current session. Omit name to auto-generate from first prompt. |
-| `/work [n\|name]` | List all sessions (no args) or switch to session by number or name. |
-| `/branch [name]` | Fork the current conversation at this point. Requires an active container. Switch to the branch with `/work`. |
+| `/resume [session]` | Resume a session by number or name, or list all sessions. |
+| `/branch [name]` | Fork the current conversation at this point. Requires an active container. Switch to the branch with `/resume`. |
 | `/effort [low\|medium\|high\|max]` | Set agent effort level. `max` is Opus 4.6 only. No args shows current level and available options. Persists across sessions. |
 | `/model` | Show current model (API-confirmed), context window size, and effort level. Requires at least one message in the session. |
 
@@ -72,9 +72,9 @@ Discord Slash Command UI
 | Category | Commands | What Changes |
 |----------|----------|-------------|
 | **Read-only** | `/context`, `/cost`, `/diff`, `/export`, `/tasks`, `/hooks`, `/skills` | Nothing — safe to run anytime |
-| **Session state** | `/clear`, `/rename`, `/work`, `/effort`, `/compact`, `/branch` | SQLite DB (sessions, session_history, group_settings) |
+| **Session state** | `/clear`, `/rename`, `/resume`, `/effort`, `/compact`, `/branch` | SQLite DB (sessions, session_history, group_settings) |
 | **Filesystem** | `/rewind` | Git checkout + clean in group workspace |
-| **Container** | `/clear`, `/reload`, `/work`, `/compact` | Closes active container stdin |
+| **Container** | `/clear`, `/reload`, `/resume`, `/compact` | Closes active container stdin |
 | **Synthetic messages** | `/catalog`, `/execute`, `/knowledge`, `/ask` | Inserts messages into Brain Router's chat |
 
 ### IPC Control Protocol

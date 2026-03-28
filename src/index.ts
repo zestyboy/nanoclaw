@@ -1092,7 +1092,7 @@ async function main(): Promise<void> {
         return;
       }
 
-      if (command === 'work') {
+      if (command === 'resume') {
         if (!args.trim()) {
           // List sessions
           const history = getSessionHistory(group.folder);
@@ -1136,7 +1136,7 @@ async function main(): Promise<void> {
         respond(`Switched to session: ${displayName}`).catch(() => {});
         logger.info(
           { group: group.name, sessionId: target.session_id },
-          'Session switched via /work',
+          'Session switched via /resume',
         );
         return;
       }

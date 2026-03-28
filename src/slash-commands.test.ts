@@ -218,10 +218,10 @@ describe('getTasksForGroup', () => {
 });
 
 // =============================================================================
-// /work command — session switching logic
+// /resume command — session switching logic
 // =============================================================================
 
-describe('/work session switching logic', () => {
+describe('/resume session switching logic', () => {
   it('session switch updates active session and touch reorders history', () => {
     // Simulate: record two sessions with distinct timestamps
     recordSessionHistory('test-group', 'session-1', 'First conversation');

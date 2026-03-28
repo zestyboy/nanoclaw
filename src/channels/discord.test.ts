@@ -1069,7 +1069,7 @@ describe('DiscordChannel', () => {
             expect.objectContaining({ name: 'export' }),
             expect.objectContaining({ name: 'tasks' }),
             expect.objectContaining({ name: 'rename' }),
-            expect.objectContaining({ name: 'work' }),
+            expect.objectContaining({ name: 'resume' }),
             expect.objectContaining({ name: 'effort' }),
             expect.objectContaining({ name: 'hooks' }),
             expect.objectContaining({ name: 'skills' }),

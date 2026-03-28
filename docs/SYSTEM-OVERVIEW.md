@@ -1222,7 +1222,7 @@ Discord slash commands provide direct control over sessions, monitoring, and Bra
 
 | Category | Commands | Description |
 |----------|----------|-------------|
-| **Session Management** | `/clear`, `/compact`, `/rename`, `/work`, `/branch`, `/effort`, `/model` | Control conversation sessions — create, switch, fork, compact, rename, configure model/effort |
+| **Session Management** | `/clear`, `/compact`, `/rename`, `/resume`, `/branch`, `/effort`, `/model` | Control conversation sessions — create, switch, fork, compact, rename, configure model/effort |
 | **Monitoring** | `/context`, `/cost`, `/diff`, `/export`, `/tasks`, `/hooks`, `/skills` | Read-only inspection of session state, costs, files, configuration, and API-confirmed model info |
 | **Actions** | `/reload`, `/rewind` | Reload agent configuration or revert file changes |
 | **Brain Router** | `/catalog`, `/execute`, `/knowledge`, `/ask` | Route messages to the Brain Router for project and knowledge operations |
@@ -1242,8 +1242,8 @@ Commands reach the system through four distinct paths:
 ### State Impact
 
 - **Read-only commands** (`/context`, `/cost`, `/diff`, `/export`, `/tasks`, `/hooks`, `/skills`) are always safe — they read from the DB or filesystem and return formatted results.
-- **Session commands** (`/clear`, `/rename`, `/work`, `/effort`, `/compact`, `/branch`) modify the `sessions`, `session_history`, or `group_settings` SQLite tables.
-- **Container commands** (`/clear`, `/reload`, `/work`, `/compact`) close the active container's stdin, causing it to exit after completing in-flight work.
+- **Session commands** (`/clear`, `/rename`, `/resume`, `/effort`, `/compact`, `/branch`) modify the `sessions`, `session_history`, or `group_settings` SQLite tables.
+- **Container commands** (`/clear`, `/reload`, `/resume`, `/compact`) close the active container's stdin, causing it to exit after completing in-flight work.
 - **Filesystem commands** (`/rewind`) run `git checkout . && git clean -fd` in the group workspace — destructive to uncommitted changes.
 
 ### Registration
