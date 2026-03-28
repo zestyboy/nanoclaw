@@ -1142,7 +1142,7 @@ async function main(): Promise<void> {
       }
 
       if (command === 'effort') {
-        const validLevels = ['low', 'medium', 'high'];
+        const validLevels = ['low', 'medium', 'high', 'max'];
         const level = args.trim().toLowerCase();
         if (!level) {
           const current = getGroupEffort(group.folder) || 'medium';
