@@ -1176,7 +1176,48 @@ Inside containers, agents have access to skill prompts at `/app/container/skills
 
 ---
 
-## 14. Key Files Reference
+## 14. Slash Commands
+
+Discord slash commands provide direct control over sessions, monitoring, and Brain Router routing. See [SLASH-COMMANDS.md](SLASH-COMMANDS.md) for the full cheat sheet.
+
+### Command Categories
+
+| Category | Commands | Description |
+|----------|----------|-------------|
+| **Session Management** | `/clear`, `/compact`, `/rename`, `/work`, `/branch`, `/effort` | Control conversation sessions — create, switch, fork, compact, rename |
+| **Monitoring** | `/context`, `/cost`, `/diff`, `/export`, `/tasks`, `/hooks`, `/skills` | Read-only inspection of session state, costs, files, and configuration |
+| **Actions** | `/reload`, `/rewind` | Reload agent configuration or revert file changes |
+| **Brain Router** | `/catalog`, `/execute`, `/knowledge`, `/ask` | Route messages to the Brain Router for project and knowledge operations |
+
+### Invocation Architecture
+
+Commands reach the system through four distinct paths:
+
+1. **Direct handler** (`onSlashCommand` in `src/index.ts`) — Most commands. Discord interaction triggers an immediate ephemeral response. No container needed for read-only commands.
+
+2. **Session interception** (`/compact` via `src/session-commands.ts`) — Detected in the message loop before trigger checks. The literal `/compact [instructions]` is forwarded to the SDK as a session command. Pre-compact messages in the same batch are processed first.
+
+3. **IPC control channel** (`/rewind`, `/branch` via `src/group-queue.ts`) — Host writes a `_control-{timestamp}.json` file to the container's IPC input directory. The agent-runner processes control files before regular messages. `/rewind` executes git operations; `/branch` calls the SDK's `forkSession()`.
+
+4. **Brain Router passthrough** (`/catalog`, `/execute`, `/knowledge`, `/ask`) — The command is injected as a synthetic message into the Brain Router's chat. The Brain Router's intent detection treats the slash prefix as a deterministic override (no signal-word heuristics needed).
+
+### State Impact
+
+- **Read-only commands** (`/context`, `/cost`, `/diff`, `/export`, `/tasks`, `/hooks`, `/skills`) are always safe — they read from the DB or filesystem and return formatted results.
+- **Session commands** (`/clear`, `/rename`, `/work`, `/effort`, `/compact`, `/branch`) modify the `sessions`, `session_history`, or `group_settings` SQLite tables.
+- **Container commands** (`/clear`, `/reload`, `/work`, `/compact`) close the active container's stdin, causing it to exit after completing in-flight work.
+- **Filesystem commands** (`/rewind`) run `git checkout . && git clean -fd` in the group workspace — destructive to uncommitted changes.
+
+### Registration
+
+Slash commands are registered globally with Discord's API in `src/channels/discord.ts` (`registerSlashCommands`). Adding a new command requires:
+1. A `SlashCommandBuilder` entry in `registerSlashCommands()`
+2. A handler block in `onSlashCommand` (in `src/index.ts`)
+3. If it needs container interaction: a control command handler in `processControlCommand()` (in `container/agent-runner/src/index.ts`)
+
+---
+
+## 15. Key Files Reference
 
 | File | Purpose |
 |------|---------|
@@ -1201,7 +1242,7 @@ Inside containers, agents have access to skill prompts at `/app/container/skills
 
 ---
 
-## 15. Development Commands
+## 16. Development Commands
 
 ```bash
 npm run dev          # Run with hot reload (tsx watch)
@@ -1216,7 +1257,7 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # restart
 
 ---
 
-## 16. Design Philosophy
+## 17. Design Philosophy
 
 From `docs/REQUIREMENTS.md`:
 
@@ -1229,7 +1270,7 @@ From `docs/REQUIREMENTS.md`:
 
 ---
 
-## 17. Remaining Work
+## 18. Remaining Work
 
 ### Notion Import Cleanup (Low Priority)
 
