@@ -837,7 +837,7 @@ Set via Railway variable: `railway variable set "NANOCLAW_MODEL=opus[1m]" --serv
 
 ### Effort Level
 
-Per-group effort level is stored in SQLite (`group_settings`) and set via `/effort [low|medium|high]`. Passed to the SDK as `query({ options: { effort } })`. Defaults to SDK default (similar to medium) when unset.
+Per-group effort level is stored in SQLite (`group_settings`) and set via `/effort [low|medium|high|max]`. Passed to the SDK as `query({ options: { effort } })`. `max` is Opus 4.6 only ("maximum capability with deepest reasoning"). Defaults to SDK default (similar to medium) when unset.
 
 ### Session Health Monitoring
 
