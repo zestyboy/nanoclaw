@@ -25,6 +25,8 @@ export interface TranscriptInspection {
 export interface SessionWarning {
   key: string;
   message: string;
+  /** Additional threshold keys to mark as warned (avoids re-firing lower thresholds). */
+  extraKeys?: string[];
 }
 
 const CONTEXT_THRESHOLDS = [70, 85, 95] as const;
@@ -205,6 +207,12 @@ export function collectSessionWarnings(
   const warnings: SessionWarning[] = [];
   const warned = new Set(metrics.warned_thresholds);
 
+  // Only emit the highest applicable threshold to avoid spamming all three
+  // warnings at once when context jumps past multiple thresholds.
+  let highestNewThreshold: (typeof CONTEXT_THRESHOLDS)[number] | null = null;
+  let highestNewKey: string | null = null;
+  const newContextKeys: string[] = [];
+
   for (const threshold of CONTEXT_THRESHOLDS) {
     const key = buildThresholdKey('context', threshold);
     if (
@@ -212,17 +220,24 @@ export function collectSessionWarnings(
       metrics.last_context_percent >= threshold &&
       !warned.has(key)
     ) {
-      const urgency =
-        threshold >= 95
-          ? 'Session context is nearly exhausted.'
-          : threshold >= 85
-            ? 'Session context is getting expensive.'
-            : 'Session context is filling up.';
-      warnings.push({
-        key,
-        message: `${urgency} Context ${renderUsageBar(metrics.last_context_percent)} ${metrics.last_context_percent}%. Run \`/context\` to inspect usage and \`/clear\` when you want a fresh session.`,
-      });
+      newContextKeys.push(key);
+      highestNewThreshold = threshold;
+      highestNewKey = key;
     }
+  }
+
+  if (highestNewThreshold !== null && highestNewKey !== null) {
+    const urgency =
+      highestNewThreshold >= 95
+        ? 'Session context is nearly exhausted.'
+        : highestNewThreshold >= 85
+          ? 'Session context is getting expensive.'
+          : 'Session context is filling up.';
+    warnings.push({
+      key: highestNewKey,
+      message: `${urgency} Context ${renderUsageBar(metrics.last_context_percent)} ${metrics.last_context_percent}%. Run \`/context\` to inspect usage and \`/clear\` when you want a fresh session.`,
+      extraKeys: newContextKeys.filter((k) => k !== highestNewKey),
+    });
   }
 
   if (

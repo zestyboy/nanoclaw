@@ -160,11 +160,9 @@ async function sendSessionWarnings(
     await sendWithMirror(chatJid, warning.message);
   }
 
+  const allKeys = warnings.flatMap((w) => [w.key, ...(w.extraKeys || [])]);
   upsertSessionMetrics(groupFolder, {
-    warned_thresholds: mergeWarnedThresholds(
-      metrics,
-      warnings.map((warning) => warning.key),
-    ),
+    warned_thresholds: mergeWarnedThresholds(metrics, allKeys),
   });
 }
 

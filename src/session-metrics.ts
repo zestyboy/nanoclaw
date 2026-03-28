@@ -1,5 +1,6 @@
 import { ContainerOutput } from './container-runner.js';
 import { getSessionMetrics, upsertSessionMetrics } from './db.js';
+import { logger } from './logger.js';
 import {
   cloneModelUsage,
   estimateContextPercent,
@@ -39,15 +40,38 @@ export function refreshSessionMetrics(
     patch.last_output_tokens = output.usage.outputTokens;
     patch.last_total_cost_usd = output.usage.totalCostUsd;
     patch.last_model_usage = cloneModelUsage(output.usage.modelUsage);
-    patch.last_context_percent =
-      output.usage.estimatedContextPercent ??
-      estimateContextPercent({
+
+    const sdkEstimate = output.usage.estimatedContextPercent;
+    const fallbackEstimate = estimateContextPercent({
+      inputTokens: output.usage.inputTokens,
+      outputTokens: output.usage.outputTokens,
+      cacheReadInputTokens: output.usage.cacheReadInputTokens,
+      cacheCreationInputTokens: output.usage.cacheCreationInputTokens,
+      modelUsage: output.usage.modelUsage,
+    });
+    patch.last_context_percent = sdkEstimate ?? fallbackEstimate;
+
+    // Temporary diagnostic: log token counts to diagnose inflated context %
+    const contextWindows = output.usage.modelUsage
+      ? Object.entries(output.usage.modelUsage).map(
+          ([model, mu]) =>
+            `${model}:${(mu as { contextWindow?: number }).contextWindow ?? '?'}`,
+        )
+      : [];
+    logger.info(
+      {
+        groupFolder,
         inputTokens: output.usage.inputTokens,
         outputTokens: output.usage.outputTokens,
         cacheReadInputTokens: output.usage.cacheReadInputTokens,
         cacheCreationInputTokens: output.usage.cacheCreationInputTokens,
-        modelUsage: output.usage.modelUsage,
-      });
+        sdkEstimate: sdkEstimate ?? null,
+        fallbackEstimate,
+        contextPercent: patch.last_context_percent,
+        contextWindows,
+      },
+      'Context percent diagnostic',
+    );
   }
 
   if (output?.rateLimitInfo) {

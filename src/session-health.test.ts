@@ -117,13 +117,15 @@ describe('session-health', () => {
     };
 
     const warnings = collectSessionWarnings(metrics);
+    // Only the highest context threshold is emitted; lower ones are in extraKeys
     expect(warnings.map((warning) => warning.key)).toEqual([
-      'context:70',
       'context:85',
       'transcript_size',
       'embedded_docs',
       'largest_entry',
     ]);
+    const contextWarning = warnings.find((w) => w.key === 'context:85')!;
+    expect(contextWarning.extraKeys).toEqual(['context:70']);
 
     const report = formatContextReport(metrics);
     expect(report).toContain('Context [█████████░] 86%');
