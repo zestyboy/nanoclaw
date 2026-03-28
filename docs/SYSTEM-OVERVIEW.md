@@ -65,7 +65,9 @@ Think of it as: you text a thought to your PA. If it's a quick task, the PA hand
 | `src/channels/registry.ts` | Channel registry (self-registration at startup) |
 | `src/ipc.ts` | IPC watcher: processes tasks from containers (search, execute, create project, reindex) |
 | `src/router.ts` | Message formatting and outbound routing |
-| `src/config.ts` | Paths, ports, intervals, Railway detection |
+| `src/config.ts` | Paths, ports, intervals, model config, Railway detection |
+| `src/session-health.ts` | Context % estimation, session warnings, context report formatting |
+| `src/session-metrics.ts` | Refreshes session metrics from agent output (tokens, context %, rate limits) |
 | `src/container-runner.ts` | Spawns agent containers with volume mounts |
 | `src/railway-runner.ts` | Spawns agents as child processes on Railway (no Docker-in-Docker) |
 | `src/container-runtime.ts` | Runtime abstraction (Docker vs Apple Container) |
@@ -817,7 +819,43 @@ If `source_jid` is omitted, `activate_mirror` uses the current Brain Router chat
 
 ---
 
-## 9. Deployment
+## 9. Model Configuration & Session Health
+
+### Model Selection
+
+The agent model is controlled by the `NANOCLAW_MODEL` environment variable, passed through `ContainerInput` to the SDK's `query({ options: { model } })`.
+
+| Value | Model | Context Window |
+|-------|-------|---------------|
+| `opus[1m]` | Claude Opus 4.6 | 1M tokens |
+| `opus` | Claude Opus 4.6 | 200K tokens (default) |
+| `sonnet` (or unset) | Claude Sonnet 4.6 | 200K tokens |
+
+**The `[1m]` suffix is required for 1M context.** The Claude Agent SDK's internal `uM()` function only returns 1M when the model ID contains `[1m]` or the `context-1m-2025-08-07` beta header is present. Without it, Opus defaults to 200K.
+
+Set via Railway variable: `railway variable set "NANOCLAW_MODEL=opus[1m]" --service nanoclaw --environment production`
+
+### Effort Level
+
+Per-group effort level is stored in SQLite (`group_settings`) and set via `/effort [low|medium|high]`. Passed to the SDK as `query({ options: { effort } })`. Defaults to SDK default (similar to medium) when unset.
+
+### Session Health Monitoring
+
+After each agent turn, `refreshSessionMetrics()` captures:
+- **Token counts**: `inputTokens`, `outputTokens`, `cacheReadInputTokens`, `cacheCreationInputTokens` (from SDK result message usage)
+- **Context %**: Estimated from token counts / context window. The SDK's `modelUsage` response confirms the actual model and context window used.
+- **Rate limit**: Utilization %, status, and reset time
+- **Transcript size**: Byte size of the session transcript file, embedded PDF sizes
+
+Context threshold warnings fire at 70%, 85%, and 95% — only the highest new threshold is sent to avoid spam. Thresholds are tracked in `session_metrics.warned_thresholds` and reset on `/clear`.
+
+### Verifying Model from API
+
+`/model` and `/context` display the **API-confirmed** model ID and context window from `modelUsage` in the SDK's result message — not the requested config value. Before the first message in a session, they show the requested value with a disclaimer.
+
+---
+
+## 10. Deployment
 
 ### Local (macOS)
 
@@ -1059,7 +1097,7 @@ After upstream merges, always verify these haven't been reverted.
 
 ---
 
-## 10. Multi-Device Sync
+## 11. Multi-Device Sync
 
 ### Web Access (Silver Bullet)
 
@@ -1108,9 +1146,9 @@ After upstream merges, always verify these haven't been reverted.
 
 ---
 
-## 11. Channel System
+## 12. Channel System
 
-Channels self-register at startup via a factory pattern (`src/channels/registry.ts`). Missing credentials = channel skipped with a WARN log.
+Channels self-register at startup via a factory pattern (`src/channels/registry.ts`). Missing credentials = channel skipped with a WARN log. Currently only Discord is active; Telegram is paused (see [TELEGRAM-PAUSED.md](TELEGRAM-PAUSED.md)).
 
 ### Channel JID Format
 
@@ -1134,7 +1172,7 @@ Channels self-register at startup via a factory pattern (`src/channels/registry.
 
 ---
 
-## 12. Database Schema
+## 13. Database Schema
 
 SQLite database at `store/messages.db`. Key tables:
 
@@ -1146,7 +1184,7 @@ SQLite database at `store/messages.db`. Key tables:
 
 ---
 
-## 13. Skills System
+## 14. Skills System
 
 NanoClaw uses Claude Code skills (`.claude/skills/`) for setup and customization. Skills are prompts that guide Claude Code to transform the codebase.
 
@@ -1176,7 +1214,7 @@ Inside containers, agents have access to skill prompts at `/app/container/skills
 
 ---
 
-## 14. Slash Commands
+## 15. Slash Commands
 
 Discord slash commands provide direct control over sessions, monitoring, and Brain Router routing. See [SLASH-COMMANDS.md](SLASH-COMMANDS.md) for the full cheat sheet.
 
@@ -1184,8 +1222,8 @@ Discord slash commands provide direct control over sessions, monitoring, and Bra
 
 | Category | Commands | Description |
 |----------|----------|-------------|
-| **Session Management** | `/clear`, `/compact`, `/rename`, `/work`, `/branch`, `/effort` | Control conversation sessions — create, switch, fork, compact, rename |
-| **Monitoring** | `/context`, `/cost`, `/diff`, `/export`, `/tasks`, `/hooks`, `/skills` | Read-only inspection of session state, costs, files, and configuration |
+| **Session Management** | `/clear`, `/compact`, `/rename`, `/work`, `/branch`, `/effort`, `/model` | Control conversation sessions — create, switch, fork, compact, rename, configure model/effort |
+| **Monitoring** | `/context`, `/cost`, `/diff`, `/export`, `/tasks`, `/hooks`, `/skills` | Read-only inspection of session state, costs, files, configuration, and API-confirmed model info |
 | **Actions** | `/reload`, `/rewind` | Reload agent configuration or revert file changes |
 | **Brain Router** | `/catalog`, `/execute`, `/knowledge`, `/ask` | Route messages to the Brain Router for project and knowledge operations |
 
@@ -1217,7 +1255,7 @@ Slash commands are registered globally with Discord's API in `src/channels/disco
 
 ---
 
-## 15. Key Files Reference
+## 16. Key Files Reference
 
 | File | Purpose |
 |------|---------|
@@ -1242,7 +1280,7 @@ Slash commands are registered globally with Discord's API in `src/channels/disco
 
 ---
 
-## 16. Development Commands
+## 17. Development Commands
 
 ```bash
 npm run dev          # Run with hot reload (tsx watch)
@@ -1257,7 +1295,7 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # restart
 
 ---
 
-## 17. Design Philosophy
+## 18. Design Philosophy
 
 From `docs/REQUIREMENTS.md`:
 
@@ -1270,7 +1308,7 @@ From `docs/REQUIREMENTS.md`:
 
 ---
 
-## 18. Remaining Work
+## 19. Remaining Work
 
 ### Notion Import Cleanup (Low Priority)
 

@@ -13,13 +13,14 @@ Quick reference for all slash commands available in Discord.
 | `/rename [name]` | Name the current session. Omit name to auto-generate from first prompt. |
 | `/work [n\|name]` | List all sessions (no args) or switch to session by number or name. |
 | `/branch [name]` | Fork the current conversation at this point. Requires an active container. Switch to the branch with `/work`. |
-| `/effort [low\|medium\|high]` | Set agent effort level. No args shows current level. Persists across sessions. |
+| `/effort [low\|medium\|high]` | Set agent effort level. No args shows current level and available options. Persists across sessions. |
+| `/model` | Show current model (API-confirmed), context window size, and effort level. Requires at least one message in the session. |
 
 ## Monitoring
 
 | Command | What It Does |
 |---------|-------------|
-| `/context` | Show session memory usage, context percentage, and optimization suggestions. |
+| `/context` | Show API-confirmed model, context window, effort, session metrics (transcript size, context %, token counts, rate limits). |
 | `/cost` | Show token count and USD cost for the current session. |
 | `/diff` | Show uncommitted file changes in the group workspace (`git diff --stat`). |
 | `/export` | Export the latest archived conversation as markdown. |
