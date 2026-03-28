@@ -294,26 +294,39 @@ export function summarizeTopEmbeddedFiles(
     .join(', ');
 }
 
-function formatTokenCount(tokens: number): string {
+export function formatTokenCount(tokens: number): string {
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
   if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`;
   return String(tokens);
 }
 
+/** Extract the API-confirmed model ID and context window from session metrics. */
+export function getConfirmedModel(
+  metrics: SessionMetrics | undefined,
+): { model: string; contextWindow: number } | null {
+  if (!metrics?.last_model_usage) return null;
+  const entries = Object.entries(metrics.last_model_usage);
+  if (entries.length === 0) return null;
+  // Pick the entry with the largest context window (primary model)
+  let best = entries[0];
+  for (const entry of entries) {
+    if ((entry[1].contextWindow || 0) > (best[1].contextWindow || 0)) {
+      best = entry;
+    }
+  }
+  return { model: best[0], contextWindow: best[1].contextWindow || 0 };
+}
+
 export function formatContextReport(metrics: SessionMetrics): string {
-  const contextWindow = metrics.last_model_usage
-    ? Math.max(
-        0,
-        ...Object.values(metrics.last_model_usage).map(
-          (mu) => mu.contextWindow || 0,
-        ),
-      )
-    : 0;
+  const confirmed = getConfirmedModel(metrics);
 
   const lines = [
     `Session: ${metrics.session_id || 'none'}`,
-    ...(contextWindow > 0
-      ? [`Context Window: ${formatTokenCount(contextWindow)}`]
+    ...(confirmed
+      ? [
+          `Model: **${confirmed.model}**`,
+          `Context Window: **${formatTokenCount(confirmed.contextWindow)}**`,
+        ]
       : []),
     `Transcript: ${formatBytes(metrics.transcript_bytes)}`,
     `Embedded PDFs: ${formatBytes(metrics.embedded_document_bytes)}`,

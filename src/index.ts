@@ -91,6 +91,8 @@ import { logger } from './logger.js';
 import {
   collectSessionWarnings,
   formatContextReport,
+  formatTokenCount,
+  getConfirmedModel,
   mergeWarnedThresholds,
 } from './session-health.js';
 import {
@@ -945,12 +947,17 @@ async function main(): Promise<void> {
           sessions[group.folder],
         );
         const effort = getGroupEffort(group.folder) || 'medium';
-        const model = NANOCLAW_MODEL || 'sonnet';
-        const contextLines = [`Model: **${model}**`, `Effort: **${effort}**`];
+        const contextLines = [`Effort: **${effort}**`];
         if (metrics) {
           contextLines.push(formatContextReport(metrics));
         } else {
-          contextLines.push('No active session metrics yet.');
+          const requested = NANOCLAW_MODEL || 'sonnet';
+          contextLines.unshift(
+            `Model: **${requested}** (requested, no API data yet)`,
+          );
+          contextLines.push(
+            'No active session metrics yet. Send a message first.',
+          );
         }
         respond(contextLines.join('\n')).catch((err) =>
           logger.warn(
@@ -962,9 +969,19 @@ async function main(): Promise<void> {
       }
 
       if (command === 'model') {
-        const model = NANOCLAW_MODEL || 'sonnet';
+        const metrics = getSessionMetrics(group.folder);
+        const confirmed = getConfirmedModel(metrics);
         const effort = getGroupEffort(group.folder) || 'medium';
-        respond(`Model: **${model}**\nEffort: **${effort}**`).catch(() => {});
+        if (confirmed) {
+          respond(
+            `Model: **${confirmed.model}**\nContext Window: **${formatTokenCount(confirmed.contextWindow)}**\nEffort: **${effort}**`,
+          ).catch(() => {});
+        } else {
+          const requested = NANOCLAW_MODEL || 'sonnet';
+          respond(
+            `Model: **${requested}** (requested, no API data yet)\nEffort: **${effort}**\nSend a message first to confirm model from API.`,
+          ).catch(() => {});
+        }
         return;
       }
 
