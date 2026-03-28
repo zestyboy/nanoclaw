@@ -659,10 +659,11 @@ async function main(): Promise<void> {
     let resultEmitted = false;
 
     try {
+      const compactCwd = process.env.NANOCLAW_WORKSPACE_GROUP || '/workspace/group';
       for await (const message of query({
         prompt: trimmedPrompt,
         options: {
-          cwd: '/workspace/group',
+          cwd: compactCwd,
           resume: sessionId,
           systemPrompt: undefined,
           allowedTools: [],
