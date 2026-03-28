@@ -963,6 +963,28 @@ Always test in these channels, not in production channels. Project channels crea
 - **Do not "promote" dev deployments** — validate code in `dev`, then merge it. Railway state is never copied between environments
 - **Do not bypass PR flow from `dev`** — `PUSH_CHANGES_DIRECT_MODE=pr-only` blocks direct pushes to `main` from the dev environment
 
+**Recovery: feature merged directly to main (skipped dev)**
+
+If a feature branch was merged to `main` without going through `dev` first:
+
+1. Production auto-deployed the untested code — verify it's healthy: `npm run railway:prod:logs`
+2. Resync `dev` so it doesn't fall behind:
+   ```bash
+   git checkout dev && git merge main && git push origin dev
+   ```
+3. If production is broken, revert on `main` and push — production will auto-redeploy the revert
+
+This is not catastrophic, just a missed testing step. No branch protection is enforced on `main`, so direct merges are possible.
+
+**Recovery: finding a feature branch after merge**
+
+```bash
+git log --oneline --merges main          # merge commits show source branch names
+git log --oneline main ^dev              # commits on main not yet in dev
+git branch --merged main                 # local branches already merged
+git branch -r --merged origin/main       # remote branches already merged
+```
+
 **Seed dev from prod once:**
 
 - `npm run railway:dev:seed`
