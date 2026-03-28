@@ -78,6 +78,78 @@ export interface TaskRunLog {
   error: string | null;
 }
 
+export interface SessionEmbeddedFile {
+  label: string;
+  bytes: number;
+  occurrences: number;
+}
+
+export interface AgentModelUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  webSearchRequests: number;
+  costUSD: number;
+  contextWindow: number;
+  maxOutputTokens: number;
+}
+
+export interface AgentUsageSnapshot {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  totalCostUsd: number;
+  modelUsage?: Record<string, AgentModelUsage>;
+  estimatedContextPercent?: number | null;
+}
+
+export interface AgentRateLimitSnapshot {
+  status: 'allowed' | 'allowed_warning' | 'rejected';
+  resetsAt?: number;
+  rateLimitType?: string;
+  utilization?: number;
+}
+
+export interface SessionMetrics {
+  group_folder: string;
+  session_id: string | null;
+  transcript_bytes: number;
+  embedded_document_bytes: number;
+  largest_entry_bytes: number;
+  top_embedded_files: SessionEmbeddedFile[];
+  last_input_tokens: number | null;
+  last_output_tokens: number | null;
+  last_total_cost_usd: number | null;
+  last_model_usage: Record<string, AgentModelUsage> | null;
+  last_context_percent: number | null;
+  last_rate_limit_utilization: number | null;
+  rate_limit_status: string | null;
+  rate_limit_type: string | null;
+  rate_limit_resets_at: string | null;
+  warned_thresholds: string[];
+  updated_at: string;
+}
+
+export interface SessionMetricsPatch {
+  session_id?: string | null;
+  transcript_bytes?: number;
+  embedded_document_bytes?: number;
+  largest_entry_bytes?: number;
+  top_embedded_files?: SessionEmbeddedFile[];
+  last_input_tokens?: number | null;
+  last_output_tokens?: number | null;
+  last_total_cost_usd?: number | null;
+  last_model_usage?: Record<string, AgentModelUsage> | null;
+  last_context_percent?: number | null;
+  last_rate_limit_utilization?: number | null;
+  rate_limit_status?: string | null;
+  rate_limit_type?: string | null;
+  rate_limit_resets_at?: string | null;
+  warned_thresholds?: string[];
+}
+
 // --- Channel abstraction ---
 
 export interface SendMessageOptions {

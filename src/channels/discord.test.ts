@@ -1058,25 +1058,29 @@ describe('DiscordChannel', () => {
 
       expect(mockRestPut).toHaveBeenCalledWith(
         '/applications/999888777/commands',
-        {
-          body: [
-            { name: 'clear', description: 'Clear the current session context' },
-            {
-              name: 'catalog',
-              description: 'Catalog information to a project',
-            },
-            { name: 'execute', description: 'Execute a task in a project' },
-            {
-              name: 'knowledge',
-              description: 'Store or search the knowledge repository',
-            },
-            {
-              name: 'ask',
-              description: 'Ask for help routing — list matching projects',
-            },
-          ],
-        },
+        expect.objectContaining({
+          body: expect.arrayContaining([
+            expect.objectContaining({ name: 'clear' }),
+            expect.objectContaining({ name: 'context' }),
+            expect.objectContaining({ name: 'reload' }),
+            expect.objectContaining({ name: 'cost' }),
+            expect.objectContaining({ name: 'diff' }),
+            expect.objectContaining({ name: 'export' }),
+            expect.objectContaining({ name: 'tasks' }),
+            expect.objectContaining({ name: 'rename' }),
+            expect.objectContaining({ name: 'work' }),
+            expect.objectContaining({ name: 'effort' }),
+            expect.objectContaining({ name: 'rewind' }),
+            expect.objectContaining({ name: 'catalog' }),
+            expect.objectContaining({ name: 'execute' }),
+            expect.objectContaining({ name: 'knowledge' }),
+            expect.objectContaining({ name: 'ask' }),
+          ]),
+        }),
       );
+      // Verify total count matches registered commands
+      const body = mockRestPut.mock.calls[0][1].body;
+      expect(body).toHaveLength(15);
     });
 
     it('registers interactionCreate handler on connect', async () => {

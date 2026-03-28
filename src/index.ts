@@ -4,6 +4,7 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
+  GROUPS_DIR,
   IDLE_TIMEOUT,
   IS_RAILWAY,
   POLL_INTERVAL,
@@ -27,23 +28,35 @@ import {
   ensureContainerRuntimeRunning,
   PROXY_BIND_HOST,
 } from './container-runtime.js';
+import { exec as execCb } from 'child_process';
+import { promisify } from 'util';
 import {
   getAllChats,
   getAllRegisteredGroups,
+  deleteSessionMetrics,
   deleteSession,
   getAllSessions,
   getAllTasks,
+  getGroupEffort,
+  getSessionMetrics,
   getMessagesSince,
   getNewMessages,
   deleteRegisteredGroup,
   getRegisteredGroup,
   getRouterState,
+  getSessionHistory,
+  getTasksForGroup,
   initDatabase,
+  recordSessionHistory,
+  renameSession,
+  setGroupEffort,
   setRegisteredGroup,
   setRouterState,
   setSession,
   storeChatMetadata,
   storeMessage,
+  touchSessionHistory,
+  upsertSessionMetrics,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -65,16 +78,38 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
+import {
+  extractSessionCommand,
+  handleSessionCommand,
+  isSessionCommandAllowed,
+} from './session-commands.js';
 import { loadStateManifest } from './state-manifest.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import {
+  collectSessionWarnings,
+  formatContextReport,
+  mergeWarnedThresholds,
+} from './session-health.js';
+import {
+  formatSessionHistoryLabel,
+  sanitizeSessionHistoryPrompt,
+} from './session-history-label.js';
+import { refreshSessionMetrics } from './session-metrics.js';
+import {
+  clearActiveSession,
+  resetGroupSessionFilesystem,
+} from './session-clear.js';
+
+const execAsync = promisify(execCb);
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
+const sessionCosts: Record<string, { tokens: number; cost: number }> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let activeReplySourceJids: Record<string, string | undefined> = {};
@@ -103,6 +138,34 @@ function loadState(): void {
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+}
+
+function clearSessionState(groupFolder: string): void {
+  delete sessions[groupFolder];
+  deleteSession(groupFolder);
+  deleteSessionMetrics(groupFolder);
+}
+
+async function sendSessionWarnings(
+  chatJid: string,
+  groupFolder: string,
+): Promise<void> {
+  const metrics = getSessionMetrics(groupFolder);
+  if (!metrics) return;
+
+  const warnings = collectSessionWarnings(metrics);
+  if (warnings.length === 0) return;
+
+  for (const warning of warnings) {
+    await sendWithMirror(chatJid, warning.message);
+  }
+
+  upsertSessionMetrics(groupFolder, {
+    warned_thresholds: mergeWarnedThresholds(
+      metrics,
+      warnings.map((warning) => warning.key),
+    ),
+  });
 }
 
 function logStateSummary(): void {
@@ -267,6 +330,41 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (missedMessages.length === 0) return true;
 
+  // --- Session command interception (before trigger check) ---
+  const cmdResult = await handleSessionCommand({
+    missedMessages,
+    isMainGroup,
+    groupName: group.name,
+    triggerPattern: TRIGGER_PATTERN,
+    timezone: TIMEZONE,
+    deps: {
+      sendMessage: (text) => channel.sendMessage(chatJid, text),
+      setTyping: (typing) =>
+        channel.setTyping?.(chatJid, typing) ?? Promise.resolve(),
+      runAgent: (prompt, onOutput) =>
+        runAgent(group, prompt, chatJid, onOutput),
+      closeStdin: () => queue.closeStdin(chatJid),
+      advanceCursor: (ts) => {
+        lastAgentTimestamp[chatJid] = ts;
+        saveState();
+      },
+      formatMessages,
+      canSenderInteract: (msg) => {
+        const hasTrigger = TRIGGER_PATTERN.test(msg.content.trim());
+        const reqTrigger = !isMainGroup && group.requiresTrigger !== false;
+        return (
+          isMainGroup ||
+          !reqTrigger ||
+          (hasTrigger &&
+            (msg.is_from_me ||
+              isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())))
+        );
+      },
+    },
+  });
+  if (cmdResult.handled) return cmdResult.success;
+  // --- End session command interception ---
+
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {
     const allowlistCfg = loadSenderAllowlist();
@@ -275,7 +373,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         TRIGGER_PATTERN.test(m.content.trim()) &&
         (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
     );
-    if (!hasTrigger) return true;
+    if (!hasTrigger) {
+      return true;
+    }
   }
 
   activeReplySourceJids[chatJid] = extractReplySourceChannelJid(missedMessages);
@@ -292,6 +392,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     { group: group.name, messageCount: missedMessages.length },
     'Processing messages',
   );
+
+  refreshSessionMetrics(group.folder, sessions[group.folder]);
+  await sendSessionWarnings(chatJid, group.folder);
 
   // Track idle timer for closing stdin when agent is idle
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -312,6 +415,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let outputSentToUser = false;
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
+    refreshSessionMetrics(group.folder, result.newSessionId, result);
+    await sendSessionWarnings(chatJid, group.folder);
+
     // Streaming output callback — called for each agent result
     if (result.result) {
       const raw =
@@ -408,18 +514,30 @@ async function runAgent(
     isTrusted,
   );
 
-  // Wrap onOutput to track session ID from streamed results
+  // Wrap onOutput to track session ID and cost from streamed results
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
+          recordSessionHistory(
+            group.folder,
+            output.newSessionId,
+            sanitizeSessionHistoryPrompt(prompt)?.slice(0, 200),
+          );
+        }
+        if (output.usage) {
+          const cost = sessionCosts[group.folder] || { tokens: 0, cost: 0 };
+          cost.cost = output.usage.totalCostUsd;
+          cost.tokens += output.usage.inputTokens + output.usage.outputTokens;
+          sessionCosts[group.folder] = cost;
         }
         await onOutput(output);
       }
     : undefined;
 
   try {
+    const effortLevel = getGroupEffort(group.folder) || undefined;
     const output = await runContainerAgent(
       group,
       {
@@ -430,6 +548,7 @@ async function runAgent(
         isMain,
         isTrusted,
         assistantName: ASSISTANT_NAME,
+        effortLevel,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -441,12 +560,17 @@ async function runAgent(
       setSession(group.folder, output.newSessionId);
     }
 
+    refreshSessionMetrics(
+      group.folder,
+      output.newSessionId ?? sessionId,
+      output,
+    );
+
     if (output.status === 'error') {
       // Clear stale session if the conversation was not found —
       // prevents infinite retry loops with a dead session ID.
       if (output.error?.includes('No conversation found')) {
-        delete sessions[group.folder];
-        deleteSession(group.folder);
+        clearSessionState(group.folder);
         logger.warn(
           { group: group.name },
           'Cleared stale session (conversation not found)',
@@ -513,6 +637,33 @@ async function startMessageLoop(): Promise<void> {
           }
 
           const isMainGroup = group.isMain === true;
+
+          // --- Session command interception (message loop) ---
+          // Scan ALL messages in the batch for a session command.
+          const loopCmdMsg = groupMessages.find(
+            (m) => extractSessionCommand(m.content, TRIGGER_PATTERN) !== null,
+          );
+
+          if (loopCmdMsg) {
+            // Only close active container if the sender is authorized — otherwise an
+            // untrusted user could kill in-flight work by sending /compact (DoS).
+            // closeStdin no-ops internally when no container is active.
+            if (
+              isSessionCommandAllowed(
+                isMainGroup,
+                loopCmdMsg.is_from_me === true,
+              )
+            ) {
+              queue.closeStdin(chatJid);
+            }
+            // Enqueue so processGroupMessages handles auth + cursor advancement.
+            // Don't pipe via IPC — slash commands need a fresh container with
+            // string prompt (not MessageStream) for SDK recognition.
+            queue.enqueueMessageCheck(chatJid);
+            continue;
+          }
+          // --- End session command interception ---
+
           const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
 
           // For non-main groups, only act on trigger messages.
@@ -534,10 +685,22 @@ async function startMessageLoop(): Promise<void> {
             (m) => m.content.trim().toLowerCase() === '/clear',
           );
           if (clearMsg) {
-            delete sessions[group.folder];
-            deleteSession(group.folder);
-            lastAgentTimestamp[chatJid] = clearMsg.timestamp;
-            saveState();
+            clearActiveSession(
+              {
+                chatJid,
+                groupFolder: group.folder,
+                timestamp: clearMsg.timestamp,
+              },
+              {
+                closeStdin: (jid) => queue.closeStdin(jid),
+                clearSessionState,
+                resetSessionFilesystem: resetGroupSessionFilesystem,
+                saveState,
+                setLastAgentTimestamp: (jid, timestamp) => {
+                  lastAgentTimestamp[jid] = timestamp;
+                },
+              },
+            );
             channel
               .sendMessage(chatJid, 'Session cleared.')
               .catch((err) =>
@@ -709,10 +872,22 @@ async function main(): Promise<void> {
       }
 
       if (command === 'clear') {
-        delete sessions[group.folder];
-        deleteSession(group.folder);
-        lastAgentTimestamp[chatJid] = new Date().toISOString();
-        saveState();
+        clearActiveSession(
+          {
+            chatJid,
+            groupFolder: group.folder,
+            timestamp: new Date().toISOString(),
+          },
+          {
+            closeStdin: (jid) => queue.closeStdin(jid),
+            clearSessionState,
+            resetSessionFilesystem: resetGroupSessionFilesystem,
+            saveState,
+            setLastAgentTimestamp: (jid, timestamp) => {
+              lastAgentTimestamp[jid] = timestamp;
+            },
+          },
+        );
         respond('Session cleared.').catch((err) =>
           logger.warn(
             { chatJid, err },
@@ -720,6 +895,220 @@ async function main(): Promise<void> {
           ),
         );
         logger.info({ group: group.name }, 'Session cleared via slash command');
+        return;
+      }
+
+      if (command === 'context') {
+        const metrics = refreshSessionMetrics(
+          group.folder,
+          sessions[group.folder],
+        );
+        const response = metrics
+          ? formatContextReport(metrics)
+          : 'No active session metrics yet.';
+        respond(response).catch((err) =>
+          logger.warn(
+            { chatJid, err },
+            'Failed to respond to /context slash command',
+          ),
+        );
+        return;
+      }
+
+      // --- Phase 1: Quick wins ---
+
+      if (command === 'reload') {
+        queue.closeStdin(chatJid);
+        respond('Reloading. Send a message to continue.').catch((err) =>
+          logger.warn({ chatJid, err }, 'Failed to respond to /reload'),
+        );
+        logger.info(
+          { group: group.name },
+          'Reload triggered via slash command',
+        );
+        return;
+      }
+
+      if (command === 'cost') {
+        const cost = sessionCosts[group.folder];
+        respond(
+          cost
+            ? `Session: ${cost.tokens.toLocaleString()} tokens, $${cost.cost.toFixed(4)}`
+            : 'No cost data yet.',
+        ).catch((err) =>
+          logger.warn({ chatJid, err }, 'Failed to respond to /cost'),
+        );
+        return;
+      }
+
+      if (command === 'diff') {
+        const groupPath = path.join(GROUPS_DIR, group.folder);
+        execAsync(`git -C "${groupPath}" diff --stat`, { timeout: 5000 })
+          .then(({ stdout }) =>
+            respond(stdout.trim() || 'No uncommitted changes.'),
+          )
+          .catch(() => respond('Not a git repository or git error.'))
+          .catch(() => {});
+        return;
+      }
+
+      if (command === 'export') {
+        const convDir = path.join(GROUPS_DIR, group.folder, 'conversations');
+        try {
+          if (!fs.existsSync(convDir)) {
+            respond('No conversations archived yet.').catch(() => {});
+            return;
+          }
+          const files = fs
+            .readdirSync(convDir)
+            .filter((f) => f.endsWith('.md'))
+            .sort()
+            .reverse();
+          if (files.length === 0) {
+            respond('No conversations archived yet.').catch(() => {});
+            return;
+          }
+          const latest = fs.readFileSync(path.join(convDir, files[0]), 'utf-8');
+          // Truncate for Discord's 2000 char limit on ephemeral replies
+          const truncated =
+            latest.length > 1900
+              ? latest.slice(0, 1900) + '\n\n... (truncated)'
+              : latest;
+          respond(truncated).catch(() => {});
+        } catch {
+          respond('Failed to read conversations.').catch(() => {});
+        }
+        return;
+      }
+
+      if (command === 'tasks') {
+        const tasks = getTasksForGroup(group.folder);
+        if (tasks.length === 0) {
+          respond('No scheduled tasks.').catch(() => {});
+          return;
+        }
+        const formatted = tasks
+          .map(
+            (t) =>
+              `• **${t.prompt.slice(0, 60)}** (${t.status}) — ${t.schedule_type}: ${t.schedule_value}`,
+          )
+          .join('\n');
+        respond(formatted).catch(() => {});
+        return;
+      }
+
+      // --- Phase 2: Session management ---
+
+      if (command === 'rename') {
+        const sessionId = sessions[group.folder];
+        if (!sessionId) {
+          respond('No active session.').catch(() => {});
+          return;
+        }
+        if (!args.trim()) {
+          respond('Usage: /rename <name>').catch(() => {});
+          return;
+        }
+        renameSession(group.folder, sessionId, args.trim());
+        respond(`Session renamed to "${args.trim()}".`).catch(() => {});
+        logger.info(
+          { group: group.name, name: args.trim() },
+          'Session renamed',
+        );
+        return;
+      }
+
+      if (command === 'work') {
+        if (!args.trim()) {
+          // List sessions
+          const history = getSessionHistory(group.folder);
+          if (history.length === 0) {
+            respond('No session history.').catch(() => {});
+            return;
+          }
+          const activeSessionId = sessions[group.folder];
+          const lines = history.map((h, i) => {
+            const active = h.session_id === activeSessionId ? ' ← active' : '';
+            const name = formatSessionHistoryLabel(h);
+            const date = h.last_used.split('T')[0];
+            return `${i + 1}. **${name}** (${date})${active}`;
+          });
+          respond(lines.join('\n')).catch(() => {});
+          return;
+        }
+        // Switch to session by number or name
+        const history = getSessionHistory(group.folder);
+        const idx = parseInt(args.trim(), 10);
+        let target: (typeof history)[0] | undefined;
+        if (!isNaN(idx) && idx >= 1 && idx <= history.length) {
+          target = history[idx - 1];
+        } else {
+          target = history.find(
+            (h) =>
+              h.name?.toLowerCase() === args.trim().toLowerCase() ||
+              h.session_id.startsWith(args.trim()),
+          );
+        }
+        if (!target) {
+          respond(`Session not found: "${args.trim()}"`).catch(() => {});
+          return;
+        }
+        // Close active container, switch session
+        queue.closeStdin(chatJid);
+        sessions[group.folder] = target.session_id;
+        setSession(group.folder, target.session_id);
+        touchSessionHistory(target.session_id);
+        const displayName = target.name || target.session_id.slice(0, 8);
+        respond(`Switched to session: ${displayName}`).catch(() => {});
+        logger.info(
+          { group: group.name, sessionId: target.session_id },
+          'Session switched via /work',
+        );
+        return;
+      }
+
+      if (command === 'effort') {
+        const validLevels = ['low', 'medium', 'high'];
+        const level = args.trim().toLowerCase();
+        if (!level) {
+          const current = getGroupEffort(group.folder) || 'default';
+          respond(`Current effort: ${current}`).catch(() => {});
+          return;
+        }
+        if (!validLevels.includes(level)) {
+          respond(`Invalid effort level. Use: ${validLevels.join(', ')}`).catch(
+            () => {},
+          );
+          return;
+        }
+        setGroupEffort(group.folder, level);
+        respond(`Effort set to: ${level}`).catch(() => {});
+        logger.info(
+          { group: group.name, effort: level },
+          'Effort level changed',
+        );
+        return;
+      }
+
+      // --- Phase 3: File rewind ---
+
+      if (command === 'rewind') {
+        const sent = queue.sendControl(chatJid, { type: 'rewind' });
+        if (sent) {
+          respond('Reverting file changes...').catch(() => {});
+        } else {
+          // No active container — rewind directly on host
+          const groupPath = path.join(GROUPS_DIR, group.folder);
+          execAsync(
+            `git -C "${groupPath}" checkout . && git -C "${groupPath}" clean -fd`,
+            {
+              timeout: 5000,
+            },
+          )
+            .then(() => respond('File changes reverted.'))
+            .catch(() => respond('No active session or not a git repository.'))
+            .catch(() => {});
+        }
         return;
       }
 
@@ -747,7 +1136,7 @@ async function main(): Promise<void> {
           respond('No Brain Router group configured.').catch(() => {});
           return;
         }
-        const [mainJid, mainGroup] = routerEntry;
+        const [mainJid] = routerEntry;
 
         // Build the prefixed message content
         const content = `/${command} ${args}`.trim();

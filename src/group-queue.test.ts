@@ -481,4 +481,74 @@ describe('GroupQueue', () => {
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
   });
+
+  // --- sendControl ---
+
+  it('sendControl writes _control- prefixed JSON file', async () => {
+    const fs = await import('fs');
+    let resolveProcess: () => void;
+
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    queue.registerProcess(
+      'group1@g.us',
+      {} as any,
+      'container-1',
+      'test-group',
+    );
+
+    const writeFileSync = vi.mocked(fs.default.writeFileSync);
+    const renameSync = vi.mocked(fs.default.renameSync);
+    writeFileSync.mockClear();
+    renameSync.mockClear();
+
+    const result = queue.sendControl('group1@g.us', { type: 'rewind' });
+    expect(result).toBe(true);
+
+    // Verify a temp file was written with _control- prefix
+    expect(writeFileSync).toHaveBeenCalled();
+    const writeCall = writeFileSync.mock.calls[0];
+    expect(typeof writeCall[0]).toBe('string');
+    expect(writeCall[0] as string).toContain('.tmp');
+
+    // Verify rename happened to final _control- file
+    expect(renameSync).toHaveBeenCalled();
+    const renameCall = renameSync.mock.calls[0];
+    expect(renameCall[1] as string).toContain('_control-');
+    expect((renameCall[1] as string).endsWith('.json')).toBe(true);
+
+    // Verify JSON content
+    const written = JSON.parse(writeCall[1] as string);
+    expect(written).toEqual({ type: 'rewind' });
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('sendControl returns false when no active container', () => {
+    const result = queue.sendControl('group1@g.us', { type: 'rewind' });
+    expect(result).toBe(false);
+  });
+
+  it('sendControl returns false when group has no folder', async () => {
+    const processMessages = vi.fn(async () => true);
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    // Active but no groupFolder registered
+    const result = queue.sendControl('group1@g.us', { type: 'rewind' });
+    expect(result).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(100);
+  });
 });

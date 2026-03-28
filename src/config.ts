@@ -101,6 +101,18 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
 );
+export const NANOCLAW_SESSION_WARN_BYTES = parseInt(
+  process.env.NANOCLAW_SESSION_WARN_BYTES || '20971520',
+  10,
+);
+export const NANOCLAW_EMBEDDED_DOC_WARN_BYTES = parseInt(
+  process.env.NANOCLAW_EMBEDDED_DOC_WARN_BYTES || '8388608',
+  10,
+);
+export const NANOCLAW_SESSION_LARGEST_ENTRY_WARN_BYTES = parseInt(
+  process.env.NANOCLAW_SESSION_LARGEST_ENTRY_WARN_BYTES || '2097152',
+  10,
+);
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

@@ -14,6 +14,7 @@
  *   Final marker after loop ends signals completion.
  */
 
+import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
@@ -28,6 +29,7 @@ interface ContainerInput {
   isTrusted?: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  effortLevel?: string;
 }
 
 interface ContainerOutput {
@@ -35,6 +37,20 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadInputTokens: number;
+    cacheCreationInputTokens: number;
+    totalCostUsd: number;
+    modelUsage?: Record<string, unknown>;
+  };
+  rateLimitInfo?: {
+    status: 'allowed' | 'allowed_warning' | 'rejected';
+    resetsAt?: number;
+    rateLimitType?: string;
+    utilization?: number;
+  };
 }
 
 interface SessionEntry {
@@ -274,18 +290,66 @@ function shouldClose(): boolean {
 }
 
 /**
- * Drain all pending IPC input messages.
+ * Process a control command from the host.
+ * Returns a user-visible message to inject into the stream, or null.
+ */
+function processControlCommand(cmd: { type: string; steps?: number }): string | null {
+  if (cmd.type === 'rewind') {
+    const cwdDir = process.env.NANOCLAW_WORKSPACE_GROUP || '/workspace/group';
+    try {
+      // Check if it's a git repo with uncommitted changes
+      const status = execSync('git status --porcelain', { cwd: cwdDir, timeout: 5000 }).toString().trim();
+      if (!status) {
+        log('Rewind: no uncommitted changes to revert');
+        return '[System: No uncommitted file changes to revert.]';
+      }
+      // Revert all uncommitted file changes
+      execSync('git checkout .', { cwd: cwdDir, timeout: 5000 });
+      // Clean untracked files created by the agent
+      execSync('git clean -fd', { cwd: cwdDir, timeout: 5000 });
+      log(`Rewind: reverted file changes in ${cwdDir}`);
+      return '[System: File changes have been reverted to the last committed state.]';
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Rewind failed: ${msg}`);
+      // If not a git repo, try to inform the user
+      return `[System: Rewind failed — ${msg}]`;
+    }
+  }
+  log(`Unknown control command: ${cmd.type}`);
+  return null;
+}
+
+/**
+ * Drain all pending IPC input messages and control commands.
+ * Control files (_control-*.json) are processed first.
  * Returns messages found, or empty array.
  */
 function drainIpcInput(): string[] {
   try {
     fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
-    const files = fs.readdirSync(IPC_INPUT_DIR)
-      .filter(f => f.endsWith('.json'))
-      .sort();
+    const allFiles = fs.readdirSync(IPC_INPUT_DIR).sort();
+
+    // Process control files first
+    const controlFiles = allFiles.filter(f => f.startsWith('_control-') && f.endsWith('.json'));
+    const messageFiles = allFiles.filter(f => !f.startsWith('_control-') && !f.startsWith('_') && f.endsWith('.json'));
 
     const messages: string[] = [];
-    for (const file of files) {
+
+    for (const file of controlFiles) {
+      const filePath = path.join(IPC_INPUT_DIR, file);
+      try {
+        const cmd = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        fs.unlinkSync(filePath);
+        const result = processControlCommand(cmd);
+        if (result) messages.push(result);
+      } catch (err) {
+        log(`Failed to process control file ${file}: ${err instanceof Error ? err.message : String(err)}`);
+        try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+      }
+    }
+
+    for (const file of messageFiles) {
       const filePath = path.join(IPC_INPUT_DIR, file);
       try {
         const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -402,6 +466,7 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
+      effort: containerInput.effortLevel as 'low' | 'medium' | 'high' | undefined,
       systemPrompt: globalClaudeMd
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
         : undefined,
@@ -456,12 +521,49 @@ async function runQuery(
 
     if (message.type === 'result') {
       resultCount++;
-      const textResult = 'result' in message ? (message as { result?: string }).result : null;
+      const resultMsg = message as {
+        result?: string;
+        total_cost_usd?: number;
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cache_read_input_tokens?: number;
+          cache_creation_input_tokens?: number;
+        };
+      };
+      const textResult = resultMsg.result ?? null;
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
       writeOutput({
         status: 'success',
         result: textResult || null,
-        newSessionId
+        newSessionId,
+        usage: {
+          inputTokens: resultMsg.usage?.input_tokens || 0,
+          outputTokens: resultMsg.usage?.output_tokens || 0,
+          cacheReadInputTokens: resultMsg.usage?.cache_read_input_tokens || 0,
+          cacheCreationInputTokens:
+            resultMsg.usage?.cache_creation_input_tokens || 0,
+          totalCostUsd: resultMsg.total_cost_usd || 0,
+          modelUsage:
+            'modelUsage' in message
+              ? ((message as { modelUsage?: Record<string, unknown> }).modelUsage ??
+                undefined)
+              : undefined,
+        },
+      });
+    }
+
+    if (message.type === 'rate_limit_event') {
+      writeOutput({
+        status: 'success',
+        result: null,
+        newSessionId,
+        rateLimitInfo: {
+          status: message.rate_limit_info.status,
+          resetsAt: message.rate_limit_info.resetsAt,
+          rateLimitType: message.rate_limit_info.rateLimitType,
+          utilization: message.rate_limit_info.utilization,
+        },
       });
     }
   }
@@ -511,6 +613,106 @@ async function main(): Promise<void> {
     log(`Draining ${pending.length} pending IPC messages into initial prompt`);
     prompt += '\n' + pending.join('\n');
   }
+
+  // --- Slash command handling ---
+  // Only known session slash commands are handled here. This prevents
+  // accidental interception of user prompts that happen to start with '/'.
+  const KNOWN_SESSION_COMMANDS = new Set(['/compact']);
+  const trimmedPrompt = prompt.trim();
+  const isSessionSlashCommand = KNOWN_SESSION_COMMANDS.has(trimmedPrompt);
+
+  if (isSessionSlashCommand) {
+    log(`Handling session command: ${trimmedPrompt}`);
+    let slashSessionId: string | undefined;
+    let compactBoundarySeen = false;
+    let hadError = false;
+    let resultEmitted = false;
+
+    try {
+      for await (const message of query({
+        prompt: trimmedPrompt,
+        options: {
+          cwd: '/workspace/group',
+          resume: sessionId,
+          systemPrompt: undefined,
+          allowedTools: [],
+          env: sdkEnv,
+          permissionMode: 'bypassPermissions' as const,
+          allowDangerouslySkipPermissions: true,
+          settingSources: ['project', 'user'] as const,
+          hooks: {
+            PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+          },
+        },
+      })) {
+        const msgType = message.type === 'system'
+          ? `system/${(message as { subtype?: string }).subtype}`
+          : message.type;
+        log(`[slash-cmd] type=${msgType}`);
+
+        if (message.type === 'system' && message.subtype === 'init') {
+          slashSessionId = message.session_id;
+          log(`Session after slash command: ${slashSessionId}`);
+        }
+
+        // Observe compact_boundary to confirm compaction completed
+        if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
+          compactBoundarySeen = true;
+          log('Compact boundary observed — compaction completed');
+        }
+
+        if (message.type === 'result') {
+          const resultSubtype = (message as { subtype?: string }).subtype;
+          const textResult = 'result' in message ? (message as { result?: string }).result : null;
+
+          if (resultSubtype?.startsWith('error')) {
+            hadError = true;
+            writeOutput({
+              status: 'error',
+              result: null,
+              error: textResult || 'Session command failed.',
+              newSessionId: slashSessionId,
+            });
+          } else {
+            writeOutput({
+              status: 'success',
+              result: textResult || 'Conversation compacted.',
+              newSessionId: slashSessionId,
+            });
+          }
+          resultEmitted = true;
+        }
+      }
+    } catch (err) {
+      hadError = true;
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      log(`Slash command error: ${errorMsg}`);
+      writeOutput({ status: 'error', result: null, error: errorMsg });
+    }
+
+    log(`Slash command done. compactBoundarySeen=${compactBoundarySeen}, hadError=${hadError}`);
+
+    // Warn if compact_boundary was never observed — compaction may not have occurred
+    if (!hadError && !compactBoundarySeen) {
+      log('WARNING: compact_boundary was not observed. Compaction may not have completed.');
+    }
+
+    // Only emit final session marker if no result was emitted yet and no error occurred
+    if (!resultEmitted && !hadError) {
+      writeOutput({
+        status: 'success',
+        result: compactBoundarySeen
+          ? 'Conversation compacted.'
+          : 'Compaction requested but compact_boundary was not observed.',
+        newSessionId: slashSessionId,
+      });
+    } else if (!hadError) {
+      // Emit session-only marker so host updates session tracking
+      writeOutput({ status: 'success', result: null, newSessionId: slashSessionId });
+    }
+    return;
+  }
+  // --- End slash command handling ---
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;

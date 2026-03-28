@@ -3,15 +3,18 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   _initTestDatabase,
   createTask,
+  deleteSessionMetrics,
   deleteTask,
   getAllChats,
   getAllRegisteredGroups,
   getMessagesSince,
   getNewMessages,
+  getSessionMetrics,
   getTaskById,
   setRegisteredGroup,
   storeChatMetadata,
   storeMessage,
+  upsertSessionMetrics,
   updateTask,
 } from './db.js';
 
@@ -446,6 +449,43 @@ describe('message query LIMIT', () => {
       50,
     );
     expect(messages).toHaveLength(10);
+  });
+});
+
+describe('session metrics', () => {
+  it('stores and merges per-session metrics', () => {
+    upsertSessionMetrics('project:test', {
+      session_id: 'session-1',
+      transcript_bytes: 1024,
+      warned_thresholds: ['context:70'],
+    });
+
+    upsertSessionMetrics('project:test', {
+      embedded_document_bytes: 2048,
+      last_context_percent: 82,
+    });
+
+    expect(getSessionMetrics('project:test')).toEqual(
+      expect.objectContaining({
+        group_folder: 'project:test',
+        session_id: 'session-1',
+        transcript_bytes: 1024,
+        embedded_document_bytes: 2048,
+        last_context_percent: 82,
+        warned_thresholds: ['context:70'],
+      }),
+    );
+  });
+
+  it('deletes session metrics', () => {
+    upsertSessionMetrics('group-a', {
+      session_id: 'session-2',
+      transcript_bytes: 512,
+    });
+
+    deleteSessionMetrics('group-a');
+
+    expect(getSessionMetrics('group-a')).toBeUndefined();
   });
 });
 
