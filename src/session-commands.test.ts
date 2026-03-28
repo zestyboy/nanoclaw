@@ -18,8 +18,10 @@ describe('extractSessionCommand', () => {
     expect(extractSessionCommand('@Andy /compact', trigger)).toBe('/compact');
   });
 
-  it('rejects /compact with extra text', () => {
-    expect(extractSessionCommand('/compact now please', trigger)).toBeNull();
+  it('accepts /compact with instructions', () => {
+    expect(extractSessionCommand('/compact now please', trigger)).toBe(
+      '/compact now please',
+    );
   });
 
   it('rejects partial matches', () => {

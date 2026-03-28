@@ -17,7 +17,7 @@
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { query, forkSession, renameSession as sdkRenameSession, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
 interface ContainerInput {
@@ -50,6 +50,10 @@ interface ContainerOutput {
     resetsAt?: number;
     rateLimitType?: string;
     utilization?: number;
+  };
+  controlResponse?: {
+    type: string;
+    [key: string]: unknown;
   };
 }
 
@@ -293,31 +297,64 @@ function shouldClose(): boolean {
  * Process a control command from the host.
  * Returns a user-visible message to inject into the stream, or null.
  */
-function processControlCommand(cmd: { type: string; steps?: number }): string | null {
+interface ControlCommandResult {
+  /** Text to inject into the agent stream (null = nothing to inject). */
+  text: string | null;
+  /** Structured response sent back to the host via writeOutput. */
+  controlResponse?: ContainerOutput['controlResponse'];
+}
+
+async function processControlCommand(
+  cmd: { type: string; steps?: number; title?: string; sessionId?: string },
+): Promise<ControlCommandResult> {
   if (cmd.type === 'rewind') {
     const cwdDir = process.env.NANOCLAW_WORKSPACE_GROUP || '/workspace/group';
     try {
-      // Check if it's a git repo with uncommitted changes
       const status = execSync('git status --porcelain', { cwd: cwdDir, timeout: 5000 }).toString().trim();
       if (!status) {
         log('Rewind: no uncommitted changes to revert');
-        return '[System: No uncommitted file changes to revert.]';
+        return { text: '[System: No uncommitted file changes to revert.]' };
       }
-      // Revert all uncommitted file changes
       execSync('git checkout .', { cwd: cwdDir, timeout: 5000 });
-      // Clean untracked files created by the agent
       execSync('git clean -fd', { cwd: cwdDir, timeout: 5000 });
       log(`Rewind: reverted file changes in ${cwdDir}`);
-      return '[System: File changes have been reverted to the last committed state.]';
+      return { text: '[System: File changes have been reverted to the last committed state.]' };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Rewind failed: ${msg}`);
-      // If not a git repo, try to inform the user
-      return `[System: Rewind failed — ${msg}]`;
+      return { text: `[System: Rewind failed — ${msg}]` };
     }
   }
+
+  if (cmd.type === 'branch') {
+    const targetSessionId = cmd.sessionId;
+    if (!targetSessionId) {
+      return { text: '[System: Cannot branch — no active session.]' };
+    }
+    try {
+      const cwdDir = process.env.NANOCLAW_WORKSPACE_GROUP || '/workspace/group';
+      const result = await forkSession(targetSessionId, {
+        title: cmd.title || undefined,
+        dir: cwdDir,
+      });
+      log(`Branch created: ${result.sessionId} from ${targetSessionId}`);
+      return {
+        text: null,
+        controlResponse: {
+          type: 'branch',
+          sessionId: result.sessionId,
+          title: cmd.title || null,
+        },
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Branch failed: ${msg}`);
+      return { text: `[System: Branch failed — ${msg}]` };
+    }
+  }
+
   log(`Unknown control command: ${cmd.type}`);
-  return null;
+  return { text: null };
 }
 
 /**
@@ -325,7 +362,7 @@ function processControlCommand(cmd: { type: string; steps?: number }): string | 
  * Control files (_control-*.json) are processed first.
  * Returns messages found, or empty array.
  */
-function drainIpcInput(): string[] {
+async function drainIpcInput(): Promise<string[]> {
   try {
     fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
     const allFiles = fs.readdirSync(IPC_INPUT_DIR).sort();
@@ -341,8 +378,11 @@ function drainIpcInput(): string[] {
       try {
         const cmd = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
         fs.unlinkSync(filePath);
-        const result = processControlCommand(cmd);
-        if (result) messages.push(result);
+        const result = await processControlCommand(cmd);
+        if (result.controlResponse) {
+          writeOutput({ status: 'success', result: null, controlResponse: result.controlResponse });
+        }
+        if (result.text) messages.push(result.text);
       } catch (err) {
         log(`Failed to process control file ${file}: ${err instanceof Error ? err.message : String(err)}`);
         try { fs.unlinkSync(filePath); } catch { /* ignore */ }
@@ -373,22 +413,13 @@ function drainIpcInput(): string[] {
  * Wait for a new IPC message or _close sentinel.
  * Returns the messages as a single string, or null if _close.
  */
-function waitForIpcMessage(): Promise<string | null> {
-  return new Promise((resolve) => {
-    const poll = () => {
-      if (shouldClose()) {
-        resolve(null);
-        return;
-      }
-      const messages = drainIpcInput();
-      if (messages.length > 0) {
-        resolve(messages.join('\n'));
-        return;
-      }
-      setTimeout(poll, IPC_POLL_MS);
-    };
-    poll();
-  });
+async function waitForIpcMessage(): Promise<string | null> {
+  while (true) {
+    if (shouldClose()) return null;
+    const messages = await drainIpcInput();
+    if (messages.length > 0) return messages.join('\n');
+    await new Promise((r) => setTimeout(r, IPC_POLL_MS));
+  }
 }
 
 /**
@@ -411,7 +442,7 @@ async function runQuery(
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
   let closedDuringQuery = false;
-  const pollIpcDuringQuery = () => {
+  const pollIpcDuringQuery = async () => {
     if (!ipcPolling) return;
     if (shouldClose()) {
       log('Close sentinel detected during query, ending stream');
@@ -420,7 +451,7 @@ async function runQuery(
       ipcPolling = false;
       return;
     }
-    const messages = drainIpcInput();
+    const messages = await drainIpcInput();
     for (const text of messages) {
       log(`Piping IPC message into active query (${text.length} chars)`);
       stream.push(text);
@@ -608,7 +639,7 @@ async function main(): Promise<void> {
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
   }
-  const pending = drainIpcInput();
+  const pending = await drainIpcInput();
   if (pending.length > 0) {
     log(`Draining ${pending.length} pending IPC messages into initial prompt`);
     prompt += '\n' + pending.join('\n');
@@ -617,9 +648,8 @@ async function main(): Promise<void> {
   // --- Slash command handling ---
   // Only known session slash commands are handled here. This prevents
   // accidental interception of user prompts that happen to start with '/'.
-  const KNOWN_SESSION_COMMANDS = new Set(['/compact']);
   const trimmedPrompt = prompt.trim();
-  const isSessionSlashCommand = KNOWN_SESSION_COMMANDS.has(trimmedPrompt);
+  const isSessionSlashCommand = trimmedPrompt === '/compact' || trimmedPrompt.startsWith('/compact ');
 
   if (isSessionSlashCommand) {
     log(`Handling session command: ${trimmedPrompt}`);

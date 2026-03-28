@@ -526,12 +526,12 @@ export class DiscordChannel implements Channel {
         .setDescription('List scheduled tasks for this group'),
       new SlashCommandBuilder()
         .setName('rename')
-        .setDescription('Name the current session')
+        .setDescription('Name the current session (auto-generates if omitted)')
         .addStringOption((opt) =>
           opt
             .setName('message')
-            .setDescription('Session name')
-            .setRequired(true),
+            .setDescription('Session name (omit to auto-generate)')
+            .setRequired(false),
         ),
       new SlashCommandBuilder()
         .setName('work')
@@ -551,6 +551,21 @@ export class DiscordChannel implements Channel {
           opt
             .setName('message')
             .setDescription('Effort level: low, medium, or high')
+            .setRequired(false),
+        ),
+      new SlashCommandBuilder()
+        .setName('hooks')
+        .setDescription('View active hook configurations'),
+      new SlashCommandBuilder()
+        .setName('skills')
+        .setDescription('List available agent skills'),
+      new SlashCommandBuilder()
+        .setName('branch')
+        .setDescription('Fork the current conversation at this point')
+        .addStringOption((opt) =>
+          opt
+            .setName('message')
+            .setDescription('Branch name (optional)')
             .setRequired(false),
         ),
       new SlashCommandBuilder()

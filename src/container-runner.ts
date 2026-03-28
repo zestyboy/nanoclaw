@@ -64,6 +64,10 @@ export interface ContainerOutput {
   error?: string;
   usage?: AgentUsageSnapshot;
   rateLimitInfo?: AgentRateLimitSnapshot;
+  controlResponse?: {
+    type: string;
+    [key: string]: unknown;
+  };
 }
 
 interface VolumeMount {

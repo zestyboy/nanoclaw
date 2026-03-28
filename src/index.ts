@@ -514,7 +514,7 @@ async function runAgent(
     isTrusted,
   );
 
-  // Wrap onOutput to track session ID and cost from streamed results
+  // Wrap onOutput to track session ID, cost, and control responses
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
@@ -531,6 +531,20 @@ async function runAgent(
           cost.cost = output.usage.totalCostUsd;
           cost.tokens += output.usage.inputTokens + output.usage.outputTokens;
           sessionCosts[group.folder] = cost;
+        }
+        if (output.controlResponse?.type === 'branch') {
+          const branchSessionId = output.controlResponse.sessionId as string;
+          const branchTitle = (output.controlResponse.title as string) || undefined;
+          if (branchSessionId) {
+            recordSessionHistory(group.folder, branchSessionId, branchTitle);
+            if (branchTitle) {
+              renameSession(group.folder, branchSessionId, branchTitle);
+            }
+            logger.info(
+              { group: group.name, sessionId: branchSessionId, title: branchTitle },
+              'Session branched via IPC',
+            );
+          }
         }
         await onOutput(output);
       }
@@ -1005,14 +1019,21 @@ async function main(): Promise<void> {
           respond('No active session.').catch(() => {});
           return;
         }
-        if (!args.trim()) {
-          respond('Usage: /rename <name>').catch(() => {});
-          return;
+        let name = args.trim();
+        if (!name) {
+          // Auto-generate from first prompt or session history
+          const history = getSessionHistory(group.folder);
+          const entry = history.find((h) => h.session_id === sessionId);
+          const source = entry?.first_prompt || entry?.summary || '';
+          name = source.replace(/\s+/g, ' ').slice(0, 50).trim();
+          if (!name) {
+            name = `session-${sessionId.slice(0, 8)}`;
+          }
         }
-        renameSession(group.folder, sessionId, args.trim());
-        respond(`Session renamed to "${args.trim()}".`).catch(() => {});
+        renameSession(group.folder, sessionId, name);
+        respond(`Session renamed to "${name}".`).catch(() => {});
         logger.info(
-          { group: group.name, name: args.trim() },
+          { group: group.name, name },
           'Session renamed',
         );
         return;
@@ -1087,6 +1108,91 @@ async function main(): Promise<void> {
           { group: group.name, effort: level },
           'Effort level changed',
         );
+        return;
+      }
+
+      if (command === 'hooks') {
+        // Show active hook configurations
+        const hooks: string[] = [];
+        hooks.push('• **PreCompact** — Archives conversation transcript before compaction');
+
+        // Check for group-level hooks in CLAUDE.md
+        const groupClaudeMd = path.join(GROUPS_DIR, group.folder, 'CLAUDE.md');
+        if (fs.existsSync(groupClaudeMd)) {
+          const content = fs.readFileSync(groupClaudeMd, 'utf-8');
+          const hookMatches = content.match(/^#+.*hook/gim);
+          if (hookMatches) {
+            hooks.push(
+              `• **Group CLAUDE.md** — ${hookMatches.length} hook section(s) defined`,
+            );
+          }
+        }
+
+        // Check for MCP server (always active)
+        hooks.push('• **MCP nanoclaw** — IPC tools for task scheduling, knowledge, and browser');
+
+        respond(`**Active hooks:**\n${hooks.join('\n')}`).catch(() => {});
+        return;
+      }
+
+      if (command === 'skills') {
+        const skillsDir = path.join(process.cwd(), 'container', 'skills');
+        try {
+          if (!fs.existsSync(skillsDir)) {
+            respond('No skills installed.').catch(() => {});
+            return;
+          }
+          const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+          const skills: { name: string; description: string }[] = [];
+          for (const entry of entries) {
+            if (!entry.isDirectory()) continue;
+            const skillFile = path.join(skillsDir, entry.name, 'SKILL.md');
+            if (!fs.existsSync(skillFile)) continue;
+            const content = fs.readFileSync(skillFile, 'utf-8');
+            const nameMatch = content.match(/^name:\s*(.+)$/m);
+            const descMatch = content.match(/^description:\s*(.+)$/m);
+            skills.push({
+              name: nameMatch?.[1]?.trim() || entry.name,
+              description: descMatch?.[1]?.trim().slice(0, 100) || '',
+            });
+          }
+          if (skills.length === 0) {
+            respond('No skills installed.').catch(() => {});
+            return;
+          }
+          const formatted = skills
+            .map((s) => `• **${s.name}** — ${s.description}`)
+            .join('\n');
+          respond(`**Available skills (${skills.length}):**\n${formatted}`).catch(() => {});
+        } catch {
+          respond('Failed to read skills.').catch(() => {});
+        }
+        return;
+      }
+
+      if (command === 'branch') {
+        const sessionId = sessions[group.folder];
+        if (!sessionId) {
+          respond('No active session to branch.').catch(() => {});
+          return;
+        }
+        const title = args.trim() || undefined;
+        const sent = queue.sendControl(chatJid, {
+          type: 'branch',
+          sessionId,
+          title,
+        });
+        if (sent) {
+          respond(
+            title
+              ? `Creating branch "${title}"...`
+              : 'Creating branch...',
+          ).catch(() => {});
+        } else {
+          respond(
+            'Cannot branch — no active container. Send a message first to start a session.',
+          ).catch(() => {});
+        }
         return;
       }
 
