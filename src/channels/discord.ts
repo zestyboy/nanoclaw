@@ -621,6 +621,19 @@ export class DiscordChannel implements Channel {
             .setDescription('Your question or message to route')
             .setRequired(true),
         ),
+      new SlashCommandBuilder()
+        .setName('do')
+        .setDescription(
+          'Execute based on accumulated project notes, or with a specific prompt',
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName('message')
+            .setDescription(
+              'Optional: specific task to execute (omit to execute from notes)',
+            )
+            .setRequired(false),
+        ),
     ];
 
     try {

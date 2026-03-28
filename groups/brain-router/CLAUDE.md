@@ -55,11 +55,27 @@ When the message text itself starts with a slash prefix, use the stated intent d
 
 - `/catalog` → CATALOG
 - `/execute` → EXECUTE
+- `/do` → EXECUTE (see `/do` behavior below)
 - `/knowledge` → PUBLIC_KNOWLEDGE
 - `/second-brain` → SECOND_BRAIN
 - `/ask` → Force disambiguation (list all matching projects, ask user to pick)
 
 Strip the prefix before processing the rest of the message. Project matching still applies as normal (e.g., `/execute for saas-mvp: build pricing page`).
+
+### Trailing `/do` Suffix
+
+If the message ends with `/do` (after trimming whitespace), treat intent as EXECUTE. Strip the `/do` suffix before processing. The rest of the message becomes both the catalog entry AND the execute prompt. This lets the user write out thoughts naturally and decide at the end whether to execute.
+
+Example: `I'd like to set up a Notion sync script that pulls new notes daily /do`
+→ Project match as normal, intent = EXECUTE, prompt = the full message minus `/do`.
+
+### `/do` Behavior
+
+`/do` is a shorthand for EXECUTE with smart context assembly:
+
+- **`/do` with no arguments (standalone):** Read the matched project's `notes.md` and recent catalog entries. Synthesize them into an execution prompt. The accumulated notes ARE the spec — dispatch to the project agent with the synthesized prompt.
+- **`/do` with arguments:** Use the arguments as the execution prompt, but also read the project's `notes.md` and include it as context. The notes inform the task; the arguments direct it.
+- **Project resolution:** If sent from a project channel (matching a project's `discord_channel_id` in projects.yaml), use that project — no ambiguity. If sent from the main channel, use the standard routing logic (recent context, explicit mention, or ask if ambiguous).
 
 ### Signal-Word Detection (fallback for unprefixed messages)
 

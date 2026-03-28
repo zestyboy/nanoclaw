@@ -149,7 +149,7 @@ Every incoming message is classified into one of four intents:
 | **PUBLIC_KNOWLEDGE** | "save to knowledge", "search knowledge", "what do I know about" | Stores/retrieves from public knowledge vault |
 | **SECOND_BRAIN** | "save to second brain", "search second brain", "personal note" | Stores/retrieves from personal vault |
 
-Slash prefixes (`/catalog`, `/execute`, `/knowledge`, `/second-brain`, `/ask`) override signal-word heuristics for deterministic routing.
+Slash prefixes (`/catalog`, `/execute`, `/do`, `/knowledge`, `/second-brain`, `/ask`) override signal-word heuristics for deterministic routing. `/do` is a shorthand for EXECUTE — standalone it synthesizes a task from accumulated notes, with args it uses those as the prompt. A trailing `/do` at the end of any message also forces EXECUTE intent.
 
 ### Project Routing
 

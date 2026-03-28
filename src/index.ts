@@ -1286,6 +1286,7 @@ async function main(): Promise<void> {
         'knowledge',
         'second-brain',
         'ask',
+        'do',
       ];
       if (passthroughCommands.includes(command)) {
         // Find the Brain Router group — prefer trusted group (Brain Router)

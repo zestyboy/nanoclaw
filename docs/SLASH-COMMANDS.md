@@ -41,6 +41,7 @@ Quick reference for all slash commands available in Discord.
 |---------|-------------|
 | `/catalog <text>` | Catalog information to a project (injected into Brain Router). |
 | `/execute <text>` | Dispatch work to a project agent (injected into Brain Router). |
+| `/do [text]` | Smart execute — no args: execute from accumulated project notes. With args: execute with those as the prompt, notes as context. Also works as a trailing suffix on any message (e.g., `my idea here /do`). |
 | `/knowledge <text>` | Store or search the public knowledge repository. |
 | `/ask <text>` | Force disambiguation — list matching projects and ask user to pick. |
 
@@ -57,7 +58,7 @@ Discord Slash Command UI
   │
   ├─ onSlashCommand handler ──── Most commands (instant response)
   │
-  ├─ Brain Router passthrough ── /catalog, /execute, /knowledge, /ask
+  ├─ Brain Router passthrough ── /catalog, /execute, /do, /knowledge, /ask
   │                               (injected as synthetic messages)
   │
   ├─ Session interception ────── /compact (intercepted in message loop,
@@ -75,7 +76,7 @@ Discord Slash Command UI
 | **Session state** | `/clear`, `/rename`, `/resume`, `/effort`, `/compact`, `/branch` | SQLite DB (sessions, session_history, group_settings) |
 | **Filesystem** | `/rewind` | Git checkout + clean in group workspace |
 | **Container** | `/clear`, `/reload`, `/resume`, `/compact` | Closes active container stdin |
-| **Synthetic messages** | `/catalog`, `/execute`, `/knowledge`, `/ask` | Inserts messages into Brain Router's chat |
+| **Synthetic messages** | `/catalog`, `/execute`, `/do`, `/knowledge`, `/ask` | Inserts messages into Brain Router's chat |
 
 ### IPC Control Protocol
 
