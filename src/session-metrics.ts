@@ -42,13 +42,16 @@ export function refreshSessionMetrics(
     patch.last_model_usage = cloneModelUsage(output.usage.modelUsage);
 
     const sdkEstimate = output.usage.estimatedContextPercent;
-    const fallbackEstimate = estimateContextPercent({
-      inputTokens: output.usage.inputTokens,
-      outputTokens: output.usage.outputTokens,
-      cacheReadInputTokens: output.usage.cacheReadInputTokens,
-      cacheCreationInputTokens: output.usage.cacheCreationInputTokens,
-      modelUsage: output.usage.modelUsage,
-    });
+    const fallbackEstimate = estimateContextPercent(
+      {
+        inputTokens: output.usage.inputTokens,
+        outputTokens: output.usage.outputTokens,
+        cacheReadInputTokens: output.usage.cacheReadInputTokens,
+        cacheCreationInputTokens: output.usage.cacheCreationInputTokens,
+        modelUsage: output.usage.modelUsage,
+      },
+      patch.transcript_bytes ?? undefined,
+    );
     patch.last_context_percent = sdkEstimate ?? fallbackEstimate;
 
     // Temporary diagnostic: log token counts to diagnose inflated context %

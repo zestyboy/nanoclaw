@@ -148,6 +148,11 @@ export function inspectSessionTranscript(
   };
 }
 
+// Approximate bytes-per-token for JSONL transcripts (JSON is verbose).
+const BYTES_PER_TOKEN = 4;
+// Estimated tokens consumed by system prompt, tool definitions, and CLAUDE.md.
+const SYSTEM_OVERHEAD_TOKENS = 50_000;
+
 export function estimateContextPercent(
   usage: Pick<
     AgentUsageSnapshot,
@@ -157,6 +162,7 @@ export function estimateContextPercent(
     | 'cacheCreationInputTokens'
     | 'modelUsage'
   >,
+  transcriptBytes?: number,
 ): number | null {
   const modelUsage = usage.modelUsage;
   if (!modelUsage) return null;
@@ -167,6 +173,17 @@ export function estimateContextPercent(
   );
   if (!contextWindow) return null;
 
+  // Prefer transcript-based estimate: the SDK's usage fields are cumulative
+  // across all API calls in a query(), so summing them overstates actual
+  // context window utilisation (e.g. 5 tool-call roundtrips each reading
+  // 200K from cache reports 1M cumulative cache_read_input_tokens).
+  if (transcriptBytes != null && transcriptBytes > 0) {
+    const estimatedTokens =
+      Math.round(transcriptBytes / BYTES_PER_TOKEN) + SYSTEM_OVERHEAD_TOKENS;
+    return Math.min(100, Math.round((estimatedTokens / contextWindow) * 100));
+  }
+
+  // Fallback: use cumulative token counts (known to overestimate).
   const totalTokens =
     usage.inputTokens +
     usage.outputTokens +
