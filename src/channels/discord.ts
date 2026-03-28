@@ -578,6 +578,9 @@ export class DiscordChannel implements Channel {
             .setRequired(false),
         ),
       new SlashCommandBuilder()
+        .setName('model')
+        .setDescription('Show current model and effort level'),
+      new SlashCommandBuilder()
         .setName('rewind')
         .setDescription('Undo agent file changes (revert to last commit)'),
       new SlashCommandBuilder()

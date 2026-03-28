@@ -944,15 +944,27 @@ async function main(): Promise<void> {
           group.folder,
           sessions[group.folder],
         );
-        const response = metrics
-          ? formatContextReport(metrics)
-          : 'No active session metrics yet.';
-        respond(response).catch((err) =>
+        const effort = getGroupEffort(group.folder) || 'default';
+        const model = NANOCLAW_MODEL || 'default (sonnet)';
+        const contextLines = [`Model: ${model}`, `Effort: ${effort}`];
+        if (metrics) {
+          contextLines.push(formatContextReport(metrics));
+        } else {
+          contextLines.push('No active session metrics yet.');
+        }
+        respond(contextLines.join('\n')).catch((err) =>
           logger.warn(
             { chatJid, err },
             'Failed to respond to /context slash command',
           ),
         );
+        return;
+      }
+
+      if (command === 'model') {
+        const model = NANOCLAW_MODEL || 'sonnet';
+        const effort = getGroupEffort(group.folder) || 'medium';
+        respond(`Model: **${model}**\nEffort: **${effort}**`).catch(() => {});
         return;
       }
 
@@ -1116,8 +1128,11 @@ async function main(): Promise<void> {
         const validLevels = ['low', 'medium', 'high'];
         const level = args.trim().toLowerCase();
         if (!level) {
-          const current = getGroupEffort(group.folder) || 'default';
-          respond(`Current effort: ${current}`).catch(() => {});
+          const current = getGroupEffort(group.folder) || 'medium';
+          const model = NANOCLAW_MODEL || 'sonnet';
+          respond(
+            `Model: **${model}**\nEffort: **${current}**\nAvailable: ${validLevels.join(', ')}`,
+          ).catch(() => {});
           return;
         }
         if (!validLevels.includes(level)) {

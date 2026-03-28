@@ -1084,7 +1084,7 @@ describe('DiscordChannel', () => {
       );
       // Verify total count matches registered commands
       const body = mockRestPut.mock.calls[0][1].body;
-      expect(body).toHaveLength(19);
+      expect(body).toHaveLength(20);
     });
 
     it('registers interactionCreate handler on connect', async () => {
