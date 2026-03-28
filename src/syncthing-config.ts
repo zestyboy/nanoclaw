@@ -291,6 +291,38 @@ async function putRestConfig(
   }
 }
 
+/**
+ * Trigger an immediate Syncthing rescan of a subfolder within a share.
+ * Fire-and-forget — logs errors but never throws.
+ */
+export async function triggerSyncthingScan(subfolder?: string): Promise<void> {
+  const homeDir = process.env.SYNCTHING_HOME_DIR || DEFAULT_HOME_DIR;
+  const configPath = path.join(homeDir, 'config.xml');
+  try {
+    const configXml = fs.readFileSync(configPath, 'utf-8');
+    const apiKey = extractSyncthingApiKey(configXml);
+    if (!apiKey) return;
+
+    const apiBaseUrl =
+      process.env.SYNCTHING_API_BASE_URL || DEFAULT_API_BASE_URL;
+    const folderId = process.env.SYNCTHING_FOLDER_ID || DEFAULT_FOLDER_ID;
+
+    const url = new URL(`${apiBaseUrl}/rest/db/scan`);
+    url.searchParams.set('folder', folderId);
+    if (subfolder) url.searchParams.set('sub', subfolder);
+
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: { 'X-API-Key': apiKey },
+    });
+    if (!response.ok) {
+      console.error(`Syncthing scan failed: HTTP ${response.status}`);
+    }
+  } catch {
+    // Syncthing may not be running (local dev) — silently ignore
+  }
+}
+
 async function restartSyncthing(
   apiBaseUrl: string,
   apiKey: string,

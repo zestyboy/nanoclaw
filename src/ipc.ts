@@ -40,6 +40,7 @@ import {
 import { scheduleQmdReindex } from './qmd-state.js';
 import { searchRecentNotes } from './recent-note-search.js';
 import { scheduleCanonicalSnapshot } from './state-backup.js';
+import { triggerSyncthingScan } from './syncthing-config.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -1700,6 +1701,8 @@ async function handleDeleteProject(
   if (fs.existsSync(projectDir)) {
     fs.rmSync(projectDir, { recursive: true });
     result.removedFolder = true;
+    // Trigger immediate Syncthing rescan so the deletion propagates to peers
+    triggerSyncthingScan(data.slug).catch(() => {});
   }
 
   scheduleCanonicalSnapshot('delete-project');

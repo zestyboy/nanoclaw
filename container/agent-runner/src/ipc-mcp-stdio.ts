@@ -612,7 +612,7 @@ server.tool(
             if (result.removedYamlEntry) actions.push('projects.yaml entry removed');
             if (result.removedFolder) actions.push('project folder deleted');
             return {
-              content: [{ type: 'text' as const, text: `Project "${args.slug}" deleted.\n\n${actions.join(', ')}.` }],
+              content: [{ type: 'text' as const, text: `Project "${args.slug}" deleted.\n\n${actions.join(', ')}.\n\nThe Discord channel no longer exists — refer to the project by name ("${args.slug}"), not by channel mention.` }],
             };
           }
           return {
