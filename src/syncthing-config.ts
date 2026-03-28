@@ -149,7 +149,7 @@ function buildProjectsFolder(
     label: 'NanoClaw Projects',
     path: env.folderPath,
     type: 'sendreceive',
-    rescanIntervalS: 3600,
+    rescanIntervalS: 60,
     fsWatcherEnabled: true,
     fsWatcherDelayS: 10,
     ignorePerms: true,
@@ -187,6 +187,10 @@ export function buildDesiredSyncthingConfig(
     globalAnnounceEnabled: true,
     relaysEnabled: true,
     natEnabled: true,
+    reconnectionIntervalS: 10,
+    stunKeepaliveStartS: 25,
+    stunKeepaliveMinS: 15,
+    relayReconnectIntervalM: 5,
   };
 
   const devices = existingDevices.filter(

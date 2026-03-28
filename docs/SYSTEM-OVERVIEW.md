@@ -1133,6 +1133,7 @@ After upstream merges, always verify these haven't been reverted.
 - **State:** Syncthing home at `/data/syncthing/` (config, keys, index DB) persisted across deploys
 - **Activation:** Set `SYNCTHING_ENABLED=true` on Railway to enable; without it, Syncthing is skipped entirely
 - **Boot behavior:** Soft-fail — if Syncthing setup fails, NanoClaw continues booting normally
+- **Railway connection tuning:** Railway's infrastructure kills idle connections after ~60 seconds. The BEP protocol ping interval is hardcoded at 90s (not configurable without a custom build), so connections drop before Syncthing can keep them alive. To compensate: folder rescan is set to 60s (not 1h) so the index stays fresh even if fsWatcher is unreliable on the Railway volume; `reconnectionIntervalS` is 10s for fast reconnects; STUN keepalives are set aggressively (start 25s, min 15s) to maintain NAT mappings; relay reconnect is 5 minutes
 
 | Env Var | Required | Default | Purpose |
 |---------|----------|---------|---------|

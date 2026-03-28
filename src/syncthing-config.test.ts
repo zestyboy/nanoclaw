@@ -80,6 +80,10 @@ describe('syncthing-config', () => {
     expect(result.config.options?.globalAnnounceEnabled).toBe(true);
     expect(result.config.options?.localAnnounceEnabled).toBe(true);
     expect(result.config.options?.relaysEnabled).toBe(true);
+    expect(result.config.options?.reconnectionIntervalS).toBe(10);
+    expect(result.config.options?.stunKeepaliveStartS).toBe(25);
+    expect(result.config.options?.stunKeepaliveMinS).toBe(15);
+    expect(result.config.options?.relayReconnectIntervalM).toBe(5);
 
     const folder = result.config.folders?.find(
       (entry) => entry.id === 'nanoclaw-projects',
@@ -89,7 +93,7 @@ describe('syncthing-config', () => {
     expect(folder?.type).toBe('sendreceive');
     expect(folder?.ignorePerms).toBe(true);
     expect(folder?.fsWatcherEnabled).toBe(true);
-    expect(folder?.rescanIntervalS).toBe(3600);
+    expect(folder?.rescanIntervalS).toBe(60);
     expect(folder?.versioning).toMatchObject({
       type: 'staggered',
       params: { maxAge: '45' },
