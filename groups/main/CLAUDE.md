@@ -25,7 +25,8 @@ When the user's message is about any of the following, delegate to the Brain Rou
 - **Second Brain** — "save to second brain", "search second brain", "personal note"
 - **Project status** — "status of [project]", "what am I working on?", "list projects"
 - **New projects** — "new project: [description]"
-- **Slash-prefixed intents** — `/catalog`, `/execute`, `/knowledge`, `/second-brain`, `/ask`
+- **Slash-prefixed intents** — `/catalog`, `/execute`, `/do`, `/knowledge`, `/second-brain`, `/ask`
+- **Trailing `/do` suffix** — any message that ends with `/do` (e.g., "set up a Notion sync script /do"). Forward the full message including the `/do` suffix — the Brain Router handles stripping it.
 
 To delegate:
 
