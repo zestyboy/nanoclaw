@@ -153,11 +153,13 @@ async function mcpQuery(
   limit: number,
   timeoutMs: number,
   requestId: number,
+  rerank = true,
 ): Promise<unknown[] | null> {
   const args: Record<string, unknown> = {
     searches,
     collections,
     limit,
+    rerank,
   };
   if (intent) args.intent = intent;
 
@@ -257,6 +259,7 @@ export async function qmdSearch(
         limit,
         QMD_BM25_TIMEOUT_MS,
         100,
+        false, // rerank: false — BM25 doesn't need LLM reranking
       );
       bm25Results = results ?? [];
     } else {
@@ -287,6 +290,7 @@ export async function qmdSearch(
         limit,
         QMD_VEC_TIMEOUT_MS,
         200,
+        false, // rerank: false — skip expensive CPU reranking for vsearch
       );
 
       if (vecResults && vecResults.length > 0) {

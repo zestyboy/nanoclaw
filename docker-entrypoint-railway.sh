@@ -83,11 +83,14 @@ QMD_PID=$!
 # Wait for QMD HTTP server to accept connections (up to 30s)
 QMD_READY=false
 for i in $(seq 1 30); do
-  if curl -sf -o /dev/null -X POST "http://localhost:$QMD_HTTP_PORT/mcp" \
+  # Use --connect-timeout to fail fast, accept any HTTP response (server is alive)
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 \
+    -X POST "http://localhost:$QMD_HTTP_PORT/mcp" \
     -H "Content-Type: application/json" \
     -H "Accept: application/json, text/event-stream" \
-    -d '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"healthcheck","version":"1.0"}}}' 2>/dev/null; then
-    echo "QMD MCP HTTP server ready (pid $QMD_PID, port $QMD_HTTP_PORT)"
+    -d '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"healthcheck","version":"1.0"}}}' 2>/dev/null)
+  if [ "$HTTP_CODE" != "000" ]; then
+    echo "QMD MCP HTTP server ready (pid $QMD_PID, port $QMD_HTTP_PORT, http $HTTP_CODE)"
     QMD_READY=true
     break
   fi

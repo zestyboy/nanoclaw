@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://tailscale.com/install.sh | sh
 # Copy Silver Bullet binary (Deno-compiled, self-contained)
 COPY --from=silverbullet /silverbullet /usr/local/bin/silverbullet
-RUN npm install -g @anthropic-ai/claude-code @tobilu/qmd
+RUN npm install -g @anthropic-ai/claude-code github:tobi/qmd
 WORKDIR /app
 COPY package*.json ./
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && \
