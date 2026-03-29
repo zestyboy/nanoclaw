@@ -135,6 +135,14 @@ function cliHybridSearch(
   return JSON.parse(output) as unknown[];
 }
 
+// --- Result Filtering ---
+
+function stripBody(
+  results: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  return results.map(({ body, ...rest }) => rest);
+}
+
 // --- Search ---
 
 export async function qmdSearch(
@@ -166,7 +174,7 @@ export async function qmdSearch(
         { collection, resultCount: results.length, tier: 'hybrid' },
         'QMD hybrid search completed',
       );
-      return { results, tier: 'hybrid' };
+      return { results: stripBody(results), tier: 'hybrid' };
     } catch (err) {
       logger.warn({ err, collection }, 'QMD SDK search failed, trying CLI');
     }
@@ -179,7 +187,10 @@ export async function qmdSearch(
       { collection, resultCount: results.length, tier: 'hybrid-cli' },
       'QMD CLI fallback search completed',
     );
-    return { results, tier: 'hybrid-cli' };
+    return {
+      results: stripBody(results as Array<Record<string, unknown>>),
+      tier: 'hybrid-cli',
+    };
   } catch (err) {
     logger.error({ err, collection }, 'QMD search failed completely');
     return { results: [], tier: 'hybrid-cli' };
