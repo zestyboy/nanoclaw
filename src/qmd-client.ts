@@ -1,11 +1,42 @@
 /**
- * QMD SDK client with three-tier search. Models stay warm in process memory.
+ * QMD SDK search client. Uses hybrid lex+vec with rerank:false for every search.
  *
- * Tier 1: BM25 (searchLex) — instant, no models
- * Tier 2: Vector (search with vec-only, rerank:false) — fast with warm embedding model
- * Tier 3: Hybrid (search with lex+vec, rerank:false) — full retrieval, no reranking
+ * Strategy: Every search runs both BM25 (keyword) and vector (semantic) retrieval
+ * combined via RRF fusion, with LLM reranking disabled. This gives the best of
+ * both worlds — exact keyword matches plus semantic understanding — in ~250ms.
+ *
+ * Models stay warm in Node.js process memory between searches. First vec query
+ * after deploy takes ~5s to load the 300MB embedding model, then subsequent
+ * queries are sub-second.
  *
  * Falls back to CLI execFileSync if the SDK store fails to initialize.
+ *
+ * ## Fallback strategies (if this approach needs changing)
+ *
+ * 1. BM25-only (fastest, no semantic):
+ *    Use store.searchLex() — 240ms, no models needed.
+ *    Trade-off: misses semantic matches ("editing" won't find "video editor").
+ *
+ * 2. Three-tier (BM25 → vec → hybrid):
+ *    Try BM25 first, fall back to vec if empty, then hybrid.
+ *    Trade-off: most queries only get keyword results.
+ *
+ * 3. Enable reranking (best quality, slowest):
+ *    Set rerank: true — 60-120s on CPU. Only if result quality is poor.
+ *    The 640MB reranker model re-reads full documents against the query.
+ *
+ * 4. CLI fallback (no SDK dependency):
+ *    Use execFileSync('qmd', ['search', ...]) for BM25 (~400ms) and
+ *    execFileSync('qmd', ['query', ...]) for hybrid (~60-120s, cold models).
+ *    Already implemented below as automatic fallback if SDK init fails.
+ *
+ * ## Benchmarks (Railway Hobby, 8 vCPU, 1056 docs, query: "Harrison launch day video production")
+ *
+ * | Mode                          | CLI (before) | SDK rerank:false (current) |
+ * |-------------------------------|-------------|---------------------------|
+ * | BM25 (searchLex)              | 400ms       | 240ms                     |
+ * | vec rerank:false (warm)       | 10-13s      | 24ms                      |
+ * | hybrid lex+vec rerank:false   | 60-120s     | 255ms                     |
  */
 
 import { execFileSync } from 'child_process';
@@ -35,10 +66,6 @@ interface QmdStore {
     limit?: number;
     minScore?: number;
   }): Promise<Array<Record<string, unknown>>>;
-  searchLex(
-    query: string,
-    options?: { limit?: number; collection?: string },
-  ): Promise<Array<Record<string, unknown>>>;
 }
 
 async function getStore(): Promise<QmdStore | null> {
@@ -50,7 +77,6 @@ async function getStore(): Promise<QmdStore | null> {
 
 async function initStore(): Promise<QmdStore | null> {
   try {
-    // Dynamic import — QMD may not be installed as a project dep in all environments
     const qmd = await import('@tobilu/qmd');
     const dbPath = IS_RAILWAY
       ? '/data/qmd-cache/qmd/index.sqlite'
@@ -64,7 +90,7 @@ async function initStore(): Promise<QmdStore | null> {
       { err },
       'QMD SDK store failed to initialize, will use CLI fallback',
     );
-    storePromise = null; // Allow retry on next call
+    storePromise = null;
     return null;
   }
 }
@@ -73,23 +99,10 @@ async function initStore(): Promise<QmdStore | null> {
 
 export interface QmdSearchResult {
   results: unknown[];
-  tier: 'bm25' | 'vsearch' | 'hybrid' | 'bm25-cli' | 'hybrid-cli';
+  tier: 'hybrid' | 'hybrid-cli';
 }
 
 // --- CLI Fallback ---
-
-function cliBm25Search(
-  query: string,
-  collection: string,
-  limit: number,
-): unknown[] {
-  const output = execFileSync(
-    'qmd',
-    ['search', query, '--json', '-c', collection, '-n', String(limit)],
-    { cwd: DATA_DIR, encoding: 'utf-8', timeout: 10_000 },
-  );
-  return JSON.parse(output) as unknown[];
-}
 
 function cliHybridSearch(
   searches: Array<{ type: string; query: string }>,
@@ -122,7 +135,7 @@ function cliHybridSearch(
   return JSON.parse(output) as unknown[];
 }
 
-// --- Three-Tier Search ---
+// --- Search ---
 
 export async function qmdSearch(
   collection: string,
@@ -131,80 +144,44 @@ export async function qmdSearch(
   limit: number,
 ): Promise<QmdSearchResult> {
   const store = await getStore();
-  const bm25Query = searches.map((s) => s.query).join(' ');
 
-  // Tier 1: BM25 (searchLex) — instant, no models
-  try {
-    let bm25Results: unknown[];
-    if (store) {
-      bm25Results = await store.searchLex(bm25Query, { limit, collection });
-    } else {
-      bm25Results = cliBm25Search(bm25Query, collection, limit);
-    }
+  // Build lex+vec queries from the agent's search terms
+  const combinedQuery = searches.map((s) => s.query).join(' ');
+  const hybridSearches: Array<{ type: string; query: string }> = [
+    { type: 'lex', query: combinedQuery },
+    { type: 'vec', query: combinedQuery },
+  ];
 
-    if (bm25Results.length > 0) {
-      logger.info(
-        { collection, resultCount: bm25Results.length, tier: 'bm25' },
-        'QMD BM25 returned results',
-      );
-      return { results: bm25Results, tier: store ? 'bm25' : 'bm25-cli' };
-    }
-    logger.info({ collection }, 'QMD BM25 returned no results');
-  } catch (err) {
-    logger.warn({ err, collection }, 'QMD BM25 search failed');
-  }
-
-  // Tier 2: Vector search (rerank:false) — warm embedding model, no reranker
+  // Primary: hybrid lex+vec via SDK with rerank:false (~255ms warm)
   if (store) {
     try {
-      const vecQuery = searches.map((s) => s.query).join('. ');
-      const vecResults = await store.search({
-        queries: [{ type: 'vec', query: vecQuery }],
-        collections: [collection],
-        intent,
-        limit,
-        rerank: false,
-      });
-
-      if (vecResults.length > 0) {
-        logger.info(
-          { collection, resultCount: vecResults.length, tier: 'vsearch' },
-          'QMD vsearch returned results',
-        );
-        return { results: vecResults, tier: 'vsearch' };
-      }
-      logger.info({ collection }, 'QMD vsearch returned no results');
-    } catch (err) {
-      logger.warn({ err, collection }, 'QMD vsearch failed');
-    }
-  }
-
-  // Tier 3: Hybrid (lex+vec, rerank:false via SDK, or full CLI fallback)
-  try {
-    if (store) {
-      const hybridResults = await store.search({
-        queries: searches,
+      const results = await store.search({
+        queries: hybridSearches,
         collections: [collection],
         intent,
         limit,
         rerank: false,
       });
       logger.info(
-        { collection, resultCount: hybridResults.length, tier: 'hybrid' },
-        'QMD hybrid (no rerank) returned results',
+        { collection, resultCount: results.length, tier: 'hybrid' },
+        'QMD hybrid search completed',
       );
-      return { results: hybridResults, tier: 'hybrid' };
+      return { results, tier: 'hybrid' };
+    } catch (err) {
+      logger.warn({ err, collection }, 'QMD SDK search failed, trying CLI');
     }
+  }
 
-    // CLI fallback — runs full pipeline including reranking (slow but works)
-    const cliResults = cliHybridSearch(searches, intent, collection, limit);
+  // Fallback: CLI hybrid (slow — cold-loads all models, includes reranking)
+  try {
+    const results = cliHybridSearch(searches, intent, collection, limit);
     logger.info(
-      { collection, resultCount: cliResults.length, tier: 'hybrid-cli' },
-      'QMD hybrid (CLI fallback) returned results',
+      { collection, resultCount: results.length, tier: 'hybrid-cli' },
+      'QMD CLI fallback search completed',
     );
-    return { results: cliResults, tier: 'hybrid-cli' };
+    return { results, tier: 'hybrid-cli' };
   } catch (err) {
-    logger.warn({ err, collection }, 'QMD hybrid search failed');
-    return { results: [], tier: store ? 'hybrid' : 'hybrid-cli' };
+    logger.error({ err, collection }, 'QMD search failed completely');
+    return { results: [], tier: 'hybrid-cli' };
   }
 }
