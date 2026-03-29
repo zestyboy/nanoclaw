@@ -27,6 +27,7 @@
     "railway:dev:seed": "node --import tsx ./scripts/seed-railway-dev-state.ts"
   },
   "dependencies": {
+    "@tobilu/qmd": "^2.0.1",
     "better-sqlite3": "^11.8.1",
     "cron-parser": "^5.5.0",
     "discord.js": "^14.18.0",
