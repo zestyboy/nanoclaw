@@ -73,11 +73,14 @@ RCLONE
   done) &
 fi
 
-# Upgrade QMD from git to get rerank toggle (PR #478, ahead of npm 2.0.2 release)
+# Upgrade QMD from git to get rerank toggle (PR #478, ahead of npm 2.0.2 release).
+# Build tools were purged from the image, so install them temporarily.
 if ! qmd --version 2>&1 | grep -q "2.1\|2.2\|3\."; then
   echo "Upgrading QMD from git (need rerank toggle from PR #478)..."
+  apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 make g++ > /dev/null 2>&1
   npm uninstall -g @tobilu/qmd 2>/dev/null || true
   npm install -g github:tobi/qmd#main 2>&1 | tail -5
+  apt-get purge -y -qq python3 make g++ > /dev/null 2>&1 && apt-get autoremove -y -qq > /dev/null 2>&1
   echo "QMD version: $(qmd --version 2>&1)"
 fi
 
