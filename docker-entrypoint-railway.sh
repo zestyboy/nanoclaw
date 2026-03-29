@@ -73,6 +73,13 @@ RCLONE
   done) &
 fi
 
+# Upgrade QMD from git to get rerank toggle (PR #478, ahead of npm 2.0.2 release)
+if ! qmd --version 2>&1 | grep -q "2.1\|2.2\|3\."; then
+  echo "Upgrading QMD from git (need rerank toggle from PR #478)..."
+  npm install -g github:tobi/qmd#main 2>&1 | tail -3
+  echo "QMD version: $(qmd --version 2>&1)"
+fi
+
 # Start QMD MCP HTTP server (models stay loaded between searches).
 # This gives sub-second semantic search instead of 10-30s cold CLI invocations.
 QMD_HTTP_PORT="${QMD_HTTP_PORT:-7862}"
