@@ -8,12 +8,18 @@ import { fileURLToPath } from 'url';
 import {
   formatRailwayTarget,
   getCurrentGitBranch,
+  getExpectedRailwaySourceBranch,
+  getRailwaySourceConfigForService,
   getRailwayTargetConfig,
+  getServiceIdFromRailwayStatus,
+  RailwayEnvironmentConfigJson,
+  RailwaySourceConfig,
+  RailwayStatusJson,
   RailwayTargetConfig,
   RailwayTargetName,
 } from './railway-common.js';
 
-type RailwayAction = 'deploy' | 'status' | 'logs';
+type RailwayAction = 'deploy' | 'status' | 'logs' | 'verify';
 
 export interface ParsedRailwayArgs {
   target: RailwayTargetName;
@@ -32,10 +38,11 @@ export function parseRailwayScriptArgs(args: string[]): ParsedRailwayArgs {
   if (
     actionArg !== 'deploy' &&
     actionArg !== 'status' &&
-    actionArg !== 'logs'
+    actionArg !== 'logs' &&
+    actionArg !== 'verify'
   ) {
     throw new Error(
-      'Action must be one of: deploy, status, logs.',
+      'Action must be one of: deploy, status, logs, verify.',
     );
   }
   if (targetArg === 'prod' && actionArg === 'deploy') {
@@ -72,6 +79,13 @@ export function parseRailwayScriptArgs(args: string[]): ParsedRailwayArgs {
     message,
     passthroughArgs,
   };
+}
+
+export interface RailwaySourceVerificationResult {
+  serviceId: string;
+  source: RailwaySourceConfig;
+  expectedBranch: string;
+  ok: boolean;
 }
 
 export function buildDeployArgs(
@@ -134,6 +148,33 @@ export function buildLinkedActionArgs(
   };
 }
 
+function parseJson<T>(raw: string, label: string): T {
+  try {
+    return JSON.parse(raw) as T;
+  } catch (error) {
+    throw new Error(
+      `Failed to parse ${label} JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+export function verifyRailwaySourceBranch(
+  status: RailwayStatusJson,
+  config: RailwayEnvironmentConfigJson,
+  target: RailwayTargetConfig,
+): RailwaySourceVerificationResult {
+  const serviceId = getServiceIdFromRailwayStatus(status, target.service);
+  const source = getRailwaySourceConfigForService(config, serviceId);
+  const expectedBranch = getExpectedRailwaySourceBranch(target.name);
+
+  return {
+    serviceId,
+    source,
+    expectedBranch,
+    ok: source.branch === expectedBranch,
+  };
+}
+
 function runRailwayDeploy(parsed: ParsedRailwayArgs): void {
   const cwd = process.cwd();
   const branch = getCurrentGitBranch(cwd);
@@ -188,11 +229,100 @@ function runLinkedRailwayAction(parsed: ParsedRailwayArgs): void {
   }
 }
 
+function runRailwayVerify(parsed: ParsedRailwayArgs): void {
+  const cwd = process.cwd();
+  const target = getRailwayTargetConfig(parsed.target, { cwd });
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-railway-'));
+  const jsonOutput = parsed.passthroughArgs.includes('--json');
+
+  if (!jsonOutput) {
+    console.log(`[railway] target ${formatRailwayTarget(target)}`);
+  }
+
+  try {
+    execFileSync(
+      'railway',
+      [
+        'link',
+        '--project',
+        target.projectId,
+        '--environment',
+        target.environment,
+        '--service',
+        target.service,
+      ],
+      {
+        cwd: tempDir,
+        stdio: 'pipe',
+      },
+    );
+
+    const status = parseJson<RailwayStatusJson>(
+      execFileSync('railway', ['status', '--json'], {
+        cwd: tempDir,
+        encoding: 'utf-8',
+      }),
+      'Railway status',
+    );
+    const config = parseJson<RailwayEnvironmentConfigJson>(
+      execFileSync(
+        'railway',
+        ['environment', 'config', '--environment', target.environment, '--json'],
+        {
+          cwd: tempDir,
+          encoding: 'utf-8',
+        },
+      ),
+      'Railway environment config',
+    );
+    const result = verifyRailwaySourceBranch(status, config, target);
+
+    if (jsonOutput) {
+      console.log(
+        JSON.stringify(
+          {
+            environment: target.environment,
+            expectedBranch: result.expectedBranch,
+            ok: result.ok,
+            projectId: target.projectId,
+            service: target.service,
+            serviceId: result.serviceId,
+            source: result.source,
+          },
+          null,
+          2,
+        ),
+      );
+      if (!result.ok) process.exitCode = 1;
+    } else {
+      console.log(
+        `[railway] source repo=${result.source.repo || '?'} branch=${result.source.branch || '?'} rootDirectory=${result.source.rootDirectory || '(root)'}`,
+      );
+      if (result.ok) {
+        console.log(
+          `[railway] verified ${target.service} watches ${result.expectedBranch} in ${target.environment}`,
+        );
+      } else {
+        console.error(
+          `[railway] expected branch=${result.expectedBranch} but ${target.service} watches ${result.source.branch || 'unset'} in ${target.environment}`,
+        );
+        process.exitCode = 1;
+      }
+    }
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 export function main(args: string[]): void {
   const parsed = parseRailwayScriptArgs(args);
 
   if (parsed.action === 'deploy') {
     runRailwayDeploy(parsed);
+    return;
+  }
+  if (parsed.action === 'verify') {
+    runRailwayVerify(parsed);
     return;
   }
 
@@ -205,5 +335,12 @@ const entryPath = process.argv[1]
 const thisPath = fileURLToPath(import.meta.url);
 
 if (entryPath === thisPath) {
-  main(process.argv.slice(2));
+  try {
+    main(process.argv.slice(2));
+  } catch (error) {
+    console.error(
+      error instanceof Error ? error.message : String(error),
+    );
+    process.exit(1);
+  }
 }
