@@ -75,6 +75,7 @@ beforeEach(() => {
     enqueueMessageCheck: (jid) => {
       enqueuedJids.push(jid);
     },
+    onTasksChanged: () => {},
   };
 });
 

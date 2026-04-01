@@ -101,6 +101,7 @@ describe('create_project registry ownership', () => {
         writeGroupsSnapshot: () => {},
         enqueueMessageCheck: () => {},
         createDiscordChannel: async () => '1234567890',
+        onTasksChanged: () => {},
       },
     );
 
