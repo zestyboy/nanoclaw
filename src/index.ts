@@ -5,6 +5,7 @@ import { OneCLI } from '@onecli-sh/sdk';
 
 import {
   ASSISTANT_NAME,
+  CREDENTIAL_PROXY_PORT,
   DEFAULT_TRIGGER,
   getTriggerPattern,
   GROUPS_DIR,
@@ -917,9 +918,21 @@ async function main(): Promise<void> {
 
   restoreRemoteControl();
 
+  // On Railway, start the credential proxy so child-process agents get API credentials.
+  // Locally, OneCLI handles credential injection instead.
+  let proxyServer: import('http').Server | undefined;
+  if (IS_RAILWAY) {
+    const { startCredentialProxy } = await import('./credential-proxy.js');
+    proxyServer = await startCredentialProxy(
+      CREDENTIAL_PROXY_PORT,
+      '127.0.0.1',
+    );
+  }
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    proxyServer?.close();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
