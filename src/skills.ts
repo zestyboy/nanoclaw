@@ -14,6 +14,7 @@ export interface SkillSummary {
     | 'repo-codex'
     | 'user-agent'
     | 'user-codex'
+    | 'user-library'
     | 'container';
 }
 
@@ -55,6 +56,11 @@ const RUNTIME_SKILL_ROOTS_ENV = 'NANOCLAW_RUNTIME_SKILL_ROOTS';
 
 type SkillSource = SkillSummary['source'];
 
+/** Canonical personal skill library path. */
+export function getPersonalSkillLibraryPath(): string {
+  return process.env.AI_SKILLS_HOME || path.join(os.homedir(), '.ai', 'skills');
+}
+
 function dedupePaths(paths: string[]): string[] {
   const seen = new Set<string>();
   const deduped: string[] = [];
@@ -73,10 +79,14 @@ function classifySkillRoot(rootPath: string): SkillSource {
   const normalized = rootPath.split(path.sep).join('/');
   const cwd = process.cwd().split(path.sep).join('/');
   const home = os.homedir().split(path.sep).join('/');
+  const aiSkillsHome = (process.env.AI_SKILLS_HOME || `${home}/.ai/skills`)
+    .split(path.sep)
+    .join('/');
 
   if (normalized === `${cwd}/.agents/skills`) return 'repo-agent';
   if (normalized === `${cwd}/.codex/skills`) return 'repo-codex';
   if (normalized === `${cwd}/container/skills`) return 'container';
+  if (normalized === aiSkillsHome) return 'user-library';
   if (normalized === `${home}/.agents/skills`) return 'user-agent';
   if (normalized === `${home}/.codex/skills`) return 'user-codex';
   if (normalized.includes('/container/skills')) return 'container';
@@ -88,11 +98,13 @@ function getDefaultSkillRoots(): string[] {
   const cwd = process.cwd();
   const home = os.homedir();
   const codeHome = process.env.CODEX_HOME;
+  const aiHome = process.env.AI_SKILLS_HOME || path.join(home, '.ai', 'skills');
 
   return dedupePaths(
     [
       path.join(cwd, '.agents', 'skills'),
       path.join(cwd, '.codex', 'skills'),
+      aiHome,
       path.join(home, '.agents', 'skills'),
       path.join(home, '.codex', 'skills'),
       codeHome ? path.join(codeHome, 'skills') : null,

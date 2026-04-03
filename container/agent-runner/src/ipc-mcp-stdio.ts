@@ -1125,6 +1125,150 @@ production Railway environments may trigger a redeploy.`,
   },
 );
 
+// --- Skill management tools ---
+
+server.tool(
+  'skill_create',
+  'Create a new personal or project-level skill. Writes a SKILL.md file and auto-commits.',
+  {
+    name: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]*$/)
+      .describe('Skill name (lowercase, hyphens allowed, e.g. "my-skill")'),
+    content: z
+      .string()
+      .describe(
+        'Full SKILL.md content including YAML frontmatter (---\\nname: ...\\ndescription: ...\\n---) and body',
+      ),
+    scope: z
+      .enum(['personal', 'project'])
+      .default('personal')
+      .describe(
+        'Where to create the skill: "personal" (user library, synced across devices) or "project" (repo-local)',
+      ),
+  },
+  async (args) => {
+    if (!hasElevatedPrivilege()) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Only main or trusted groups can manage skills.',
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    writeIpcFile(TASKS_DIR, {
+      type: 'skill:create',
+      skill_name: args.name,
+      skill_content: args.content,
+      skill_scope: args.scope,
+      timestamp: new Date().toISOString(),
+    });
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Skill "${args.name}" creation requested (scope: ${args.scope}). It will be available after the next session start.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  'skill_update',
+  'Update an existing personal or project-level skill. Overwrites the SKILL.md and auto-commits.',
+  {
+    name: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]*$/)
+      .describe('Name of the skill to update'),
+    content: z.string().describe('New full SKILL.md content'),
+    scope: z
+      .enum(['personal', 'project'])
+      .default('personal')
+      .describe('Scope of the skill to update'),
+  },
+  async (args) => {
+    if (!hasElevatedPrivilege()) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Only main or trusted groups can manage skills.',
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    writeIpcFile(TASKS_DIR, {
+      type: 'skill:update',
+      skill_name: args.name,
+      skill_content: args.content,
+      skill_scope: args.scope,
+      timestamp: new Date().toISOString(),
+    });
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Skill "${args.name}" update requested (scope: ${args.scope}).`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  'skill_delete',
+  'Delete an existing personal or project-level skill. Removes the skill directory and auto-commits.',
+  {
+    name: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]*$/)
+      .describe('Name of the skill to delete'),
+    scope: z
+      .enum(['personal', 'project'])
+      .default('personal')
+      .describe('Scope of the skill to delete'),
+  },
+  async (args) => {
+    if (!hasElevatedPrivilege()) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Only main or trusted groups can manage skills.',
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    writeIpcFile(TASKS_DIR, {
+      type: 'skill:delete',
+      skill_name: args.name,
+      skill_scope: args.scope,
+      timestamp: new Date().toISOString(),
+    });
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Skill "${args.name}" deletion requested (scope: ${args.scope}).`,
+        },
+      ],
+    };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

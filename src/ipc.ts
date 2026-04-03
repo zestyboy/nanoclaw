@@ -42,6 +42,7 @@ import { scheduleQmdReindex } from './qmd-state.js';
 import { searchRecentNotes } from './recent-note-search.js';
 import { scheduleCanonicalSnapshot } from './state-backup.js';
 import { triggerSyncthingScan } from './syncthing-config.js';
+import { getPersonalSkillLibraryPath } from './skills.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -287,6 +288,10 @@ export async function processTaskIpc(
     createPr?: boolean;
     prTitle?: string;
     prBody?: string;
+    // For skill:create / skill:update / skill:delete
+    skill_name?: string;
+    skill_content?: string;
+    skill_scope?: 'personal' | 'project';
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -1207,8 +1212,142 @@ export async function processTaskIpc(
       break;
     }
 
+    case 'skill:create':
+    case 'skill:update': {
+      if (!hasElevatedPrivilege(isMain, isTrusted)) {
+        logger.warn(
+          { sourceGroup },
+          `Unauthorized ${data.type} attempt blocked`,
+        );
+        break;
+      }
+      if (!data.skill_name || !data.skill_content) {
+        logger.warn(
+          { data },
+          `${data.type}: missing skill_name or skill_content`,
+        );
+        break;
+      }
+      if (!/^[a-z][a-z0-9-]*$/.test(data.skill_name)) {
+        logger.warn(
+          { skill: data.skill_name },
+          `${data.type}: invalid skill name`,
+        );
+        break;
+      }
+      try {
+        const scope = data.skill_scope || 'personal';
+        const skillRoot =
+          scope === 'project'
+            ? path.join(process.cwd(), '.agents', 'skills')
+            : getPersonalSkillLibraryPath();
+        const skillDir = path.join(skillRoot, data.skill_name);
+
+        if (data.type === 'skill:create' && fs.existsSync(skillDir)) {
+          logger.warn({ skill: data.skill_name }, 'Skill already exists');
+          break;
+        }
+        if (data.type === 'skill:update' && !fs.existsSync(skillDir)) {
+          logger.warn({ skill: data.skill_name }, 'Skill not found for update');
+          break;
+        }
+
+        fs.mkdirSync(skillDir, { recursive: true });
+        fs.writeFileSync(path.join(skillDir, 'SKILL.md'), data.skill_content);
+
+        await autoCommitSkillChange(
+          skillRoot,
+          data.type === 'skill:create'
+            ? `Add ${data.skill_name}`
+            : `Update ${data.skill_name}`,
+        );
+
+        logger.info(
+          { skill: data.skill_name, scope },
+          `${data.type} completed`,
+        );
+      } catch (err) {
+        logger.error({ err, skill: data.skill_name }, `${data.type} failed`);
+      }
+      break;
+    }
+
+    case 'skill:delete': {
+      if (!hasElevatedPrivilege(isMain, isTrusted)) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized skill:delete attempt blocked',
+        );
+        break;
+      }
+      if (!data.skill_name) {
+        logger.warn({ data }, 'skill:delete: missing skill_name');
+        break;
+      }
+      if (!/^[a-z][a-z0-9-]*$/.test(data.skill_name)) {
+        logger.warn(
+          { skill: data.skill_name },
+          'skill:delete: invalid skill name',
+        );
+        break;
+      }
+      try {
+        const scope = data.skill_scope || 'personal';
+        const skillRoot =
+          scope === 'project'
+            ? path.join(process.cwd(), '.agents', 'skills')
+            : getPersonalSkillLibraryPath();
+        const skillDir = path.join(skillRoot, data.skill_name);
+
+        if (!fs.existsSync(skillDir)) {
+          logger.warn(
+            { skill: data.skill_name },
+            'Skill not found for deletion',
+          );
+          break;
+        }
+
+        fs.rmSync(skillDir, { recursive: true, force: true });
+        await autoCommitSkillChange(skillRoot, `Remove ${data.skill_name}`);
+
+        logger.info(
+          { skill: data.skill_name, scope },
+          'skill:delete completed',
+        );
+      } catch (err) {
+        logger.error({ err, skill: data.skill_name }, 'skill:delete failed');
+      }
+      break;
+    }
+
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
+  }
+}
+
+/** Auto-commit a skill change in the given root directory. */
+async function autoCommitSkillChange(
+  skillRoot: string,
+  message: string,
+): Promise<void> {
+  const { execSync } = await import('child_process');
+  try {
+    execSync('git add -A', { cwd: skillRoot, stdio: 'pipe' });
+    // Check if there are staged changes
+    try {
+      execSync('git diff --cached --quiet', { cwd: skillRoot, stdio: 'pipe' });
+      // No changes staged — skip commit
+    } catch {
+      // Non-zero exit = there are staged changes
+      execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, {
+        cwd: skillRoot,
+        stdio: 'pipe',
+      });
+      logger.info({ skillRoot, message }, 'Auto-committed skill change');
+    }
+  } catch (err) {
+    // Git not initialized or other error — log but don't fail
+    logger.warn({ err, skillRoot }, 'Auto-commit skipped (git not available)');
   }
 }
 

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   findSkillByName,
   formatSkillInlineToken,
+  getPersonalSkillLibraryPath,
   listSkills,
   parseInlineSkillRefs,
   resolveRuntimeSkillRoots,
@@ -29,12 +30,18 @@ function writeSkill(
 describe('skills catalog', () => {
   const tempDirs: string[] = [];
   const originalRuntimeRoots = process.env.NANOCLAW_RUNTIME_SKILL_ROOTS;
+  const originalAiSkillsHome = process.env.AI_SKILLS_HOME;
 
   afterEach(() => {
     if (originalRuntimeRoots === undefined) {
       delete process.env.NANOCLAW_RUNTIME_SKILL_ROOTS;
     } else {
       process.env.NANOCLAW_RUNTIME_SKILL_ROOTS = originalRuntimeRoots;
+    }
+    if (originalAiSkillsHome === undefined) {
+      delete process.env.AI_SKILLS_HOME;
+    } else {
+      process.env.AI_SKILLS_HOME = originalAiSkillsHome;
     }
     for (const dir of tempDirs) {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -326,6 +333,38 @@ description: Troubleshoot issues
       ),
     ).toContain('Preferred description');
     expect(fs.existsSync(path.join(destination, 'stale-skill'))).toBe(false);
+  });
+
+  it('classifies skills from AI_SKILLS_HOME as user-library', () => {
+    const library = makeRoot();
+    process.env.AI_SKILLS_HOME = library;
+
+    writeSkill(
+      library,
+      'my-personal-skill',
+      `---
+name: my-personal-skill
+description: A personal skill from the library
+---`,
+    );
+
+    const skills = listSkills({ roots: [library] });
+    expect(skills).toEqual([
+      expect.objectContaining({
+        name: 'my-personal-skill',
+        source: 'user-library',
+      }),
+    ]);
+  });
+
+  it('getPersonalSkillLibraryPath respects AI_SKILLS_HOME env var', () => {
+    process.env.AI_SKILLS_HOME = '/custom/skill/path';
+    expect(getPersonalSkillLibraryPath()).toBe('/custom/skill/path');
+
+    delete process.env.AI_SKILLS_HOME;
+    expect(getPersonalSkillLibraryPath()).toBe(
+      path.join(os.homedir(), '.ai', 'skills'),
+    );
   });
 
   it('warns when configured runtime roots are missing', () => {

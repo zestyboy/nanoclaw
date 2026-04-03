@@ -1215,14 +1215,40 @@ The shared root resolution, precedence, and sync logic lives in `src/skills.ts`.
 
 Default canonical runtime roots are:
 
-- repo-local `.agents/skills`
-- repo-local `.codex/skills`
+- repo-local `.agents/skills` — project-specific overrides
+- repo-local `.codex/skills` — project-specific overrides
+- `~/.ai/skills` (or `$AI_SKILLS_HOME`) — **personal skill library** (user-owned, synced across devices)
 - user `~/.agents/skills`
 - user `~/.codex/skills`
 - `${CODEX_HOME}/skills` when `CODEX_HOME` is set
 - built-in `container/skills`
 
 When duplicate skill names exist, earlier roots win. To override the default runtime roots entirely, set `NANOCLAW_RUNTIME_SKILL_ROOTS` using the platform path delimiter (`:` on Unix-like systems).
+
+### Personal Skill Library
+
+The personal skill library at `~/.ai/skills/` is the user's canonical, portable skill collection. It is:
+
+- **A git repository** — auto-committed on every change for version history
+- **Synced via Syncthing** — real-time propagation between devices
+- **Consumed by multiple runtimes** via symlinks:
+  - `~/.claude/skills → ~/.ai/skills` (Claude Code)
+  - `~/.agents/skills → ~/.ai/skills` (NanoClaw user-level root)
+  - `~/.codex/skills → ~/.ai/skills` (Codex CLI)
+
+**Precedence model** (first match wins):
+1. Project-local skills (`.agents/skills/`, `.codex/skills/`) — override personal for that repo
+2. Personal/global skills (`~/.ai/skills/`) — follow the user everywhere
+3. Built-in skills (`container/skills/`) — NanoClaw defaults
+
+**Managing skills from mobile:** Container agents have `skill_create`, `skill_update`, and `skill_delete` MCP tools that write IPC tasks. The host processes these, writes to the appropriate root, and auto-commits. Both `personal` and `project` scopes are supported.
+
+**Managing skills from Claude Code:** Use the `/manage-skills` skill for CRUD with auto-git.
+
+**Setting up on a new device:**
+1. Clone the skill library: `git clone <remote> ~/.ai/skills`
+2. Create consumer symlinks: `ln -s ~/.ai/skills ~/.claude/skills` (etc.)
+3. Add `~/.ai/skills` as a Syncthing shared folder
 
 ### Container Skills
 
