@@ -331,7 +331,7 @@ export class DiscordChannel implements Channel {
         const matches = searchSkills(String(focused.value || '')).slice(0, 25);
         await interaction.respond(
           matches.map((skill) => ({
-            name: `${skill.name} — ${skill.description}`.slice(0, 100),
+            name: skill.name,
             value: skill.name,
           })),
         );
