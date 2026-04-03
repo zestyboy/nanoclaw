@@ -14,8 +14,14 @@ export type OnSlashCommand = (
   chatJid: string,
   command: string,
   args: string,
+  meta: SlashCommandMeta | undefined,
   respond: (text: string) => Promise<void>,
 ) => void;
+
+export interface SlashCommandMeta {
+  subcommand?: string;
+  options?: Record<string, string>;
+}
 
 export interface ChannelOpts {
   onMessage: OnInboundMessage;

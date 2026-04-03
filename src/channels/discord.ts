@@ -19,7 +19,13 @@ import { ASSISTANT_NAME, IS_RAILWAY, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { resolveGroupFolderPath } from '../group-folder.js';
 import { logger } from '../logger.js';
-import { registerChannel, ChannelOpts, OnSlashCommand } from './registry.js';
+import { searchSkills } from '../skills.js';
+import {
+  registerChannel,
+  ChannelOpts,
+  OnSlashCommand,
+  SlashCommandMeta,
+} from './registry.js';
 import {
   Channel,
   OnChatMetadata,
@@ -308,28 +314,62 @@ export class DiscordChannel implements Channel {
 
     // Handle native slash commands (Discord Interactions API)
     this.client.on(Events.InteractionCreate, async (interaction) => {
+      if (interaction.isAutocomplete()) {
+        if (
+          interaction.commandName !== 'skills' ||
+          interaction.options.getSubcommand(false) !== 'run'
+        ) {
+          return;
+        }
+
+        const focused = interaction.options.getFocused(true);
+        if (focused.name !== 'name') {
+          await interaction.respond([]);
+          return;
+        }
+
+        const matches = searchSkills(String(focused.value || '')).slice(0, 25);
+        await interaction.respond(
+          matches.map((skill) => ({
+            name: `${skill.name} — ${skill.description}`.slice(0, 100),
+            value: skill.name,
+          })),
+        );
+        return;
+      }
+
       if (!interaction.isChatInputCommand()) return;
 
       const chatJid = `dc:${interaction.channelId}`;
       const command = interaction.commandName;
+      const subcommand = interaction.options.getSubcommand(false) || undefined;
+      const args = interaction.options.getString('message') || '';
+      const meta = this.extractSlashCommandMeta(
+        interaction.options,
+        subcommand,
+      );
 
       logger.info(
-        { chatJid, command, user: interaction.user.tag },
+        { chatJid, command, subcommand, user: interaction.user.tag },
         'Discord slash command received',
       );
 
-      const args = interaction.options.getString('message') || '';
-
-      this.opts.onSlashCommand(chatJid, command, args, async (text: string) => {
-        try {
-          await interaction.reply({ content: text, ephemeral: true });
-        } catch (err) {
-          logger.warn(
-            { chatJid, command, err },
-            'Failed to reply to slash command',
-          );
-        }
-      });
+      this.opts.onSlashCommand(
+        chatJid,
+        command,
+        args,
+        meta,
+        async (text: string) => {
+          try {
+            await interaction.reply({ content: text, ephemeral: true });
+          } catch (err) {
+            logger.warn(
+              { chatJid, command, subcommand, err },
+              'Failed to reply to slash command',
+            );
+          }
+        },
+      );
     });
 
     return new Promise<void>((resolve) => {
@@ -569,7 +609,39 @@ export class DiscordChannel implements Channel {
         .setDescription('View active hook configurations'),
       new SlashCommandBuilder()
         .setName('skills')
-        .setDescription('List available agent skills'),
+        .setDescription('Discover and run agent skills')
+        .addSubcommand((subcommand) =>
+          subcommand.setName('list').setDescription('List available skills'),
+        )
+        .addSubcommand((subcommand) =>
+          subcommand
+            .setName('search')
+            .setDescription('Search skills by topic or partial name')
+            .addStringOption((opt) =>
+              opt
+                .setName('query')
+                .setDescription('Search query')
+                .setRequired(true),
+            ),
+        )
+        .addSubcommand((subcommand) =>
+          subcommand
+            .setName('run')
+            .setDescription('Run a task with an explicitly loaded skill')
+            .addStringOption((opt) =>
+              opt
+                .setName('name')
+                .setDescription('Skill name')
+                .setRequired(true)
+                .setAutocomplete(true),
+            )
+            .addStringOption((opt) =>
+              opt
+                .setName('task')
+                .setDescription('Task to execute with the selected skill')
+                .setRequired(false),
+            ),
+        ),
       new SlashCommandBuilder()
         .setName('branch')
         .setDescription('Fork the current conversation at this point')
@@ -648,6 +720,52 @@ export class DiscordChannel implements Channel {
     } catch (err) {
       logger.error({ err }, 'Failed to register Discord slash commands');
     }
+  }
+
+  private extractSlashCommandMeta(
+    options: {
+      data?: readonly {
+        name?: string;
+        value?: unknown;
+        options?: readonly unknown[];
+      }[];
+      getString: (name: string) => string | null;
+    },
+    subcommand?: string,
+  ): SlashCommandMeta | undefined {
+    const meta: SlashCommandMeta = {};
+    if (subcommand) {
+      meta.subcommand = subcommand;
+    }
+
+    const optionData = options.data || [];
+    const scopedOptions =
+      optionData.find((entry) => entry.name === subcommand)?.options ||
+      optionData;
+    const normalizedOptions = Array.isArray(scopedOptions) ? scopedOptions : [];
+
+    const namedOptions = normalizedOptions.reduce<Record<string, string>>(
+      (acc, entry) => {
+        if (
+          entry &&
+          typeof entry === 'object' &&
+          'name' in entry &&
+          typeof entry.name === 'string' &&
+          'value' in entry &&
+          typeof entry.value === 'string'
+        ) {
+          acc[entry.name] = entry.value;
+        }
+        return acc;
+      },
+      {},
+    );
+
+    if (Object.keys(namedOptions).length > 0) {
+      meta.options = namedOptions;
+    }
+
+    return meta.subcommand || meta.options ? meta : undefined;
   }
 }
 

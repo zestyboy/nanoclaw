@@ -133,6 +133,7 @@ vi.mock('discord.js', () => {
   class SlashCommandBuilder {
     private _name = '';
     private _description = '';
+    private _options: any[] = [];
     setName(name: string) {
       this._name = name;
       return this;
@@ -143,15 +144,102 @@ vi.mock('discord.js', () => {
     }
     addStringOption(fn: (opt: any) => any) {
       const optBuilder = {
-        setName: () => optBuilder,
-        setDescription: () => optBuilder,
-        setRequired: () => optBuilder,
+        _type: 'string',
+        _name: '',
+        _description: '',
+        _required: false,
+        _autocomplete: false,
+        setName: (name: string) => {
+          optBuilder._name = name;
+          return optBuilder;
+        },
+        setDescription: (description: string) => {
+          optBuilder._description = description;
+          return optBuilder;
+        },
+        setRequired: (required: boolean) => {
+          optBuilder._required = required;
+          return optBuilder;
+        },
+        setAutocomplete: (autocomplete: boolean) => {
+          optBuilder._autocomplete = autocomplete;
+          return optBuilder;
+        },
       };
       fn(optBuilder);
+      this._options.push({
+        type: 'string',
+        name: optBuilder._name,
+        description: optBuilder._description,
+        required: optBuilder._required,
+        autocomplete: optBuilder._autocomplete,
+      });
+      return this;
+    }
+    addSubcommand(fn: (subcommand: any) => any) {
+      const subcommandBuilder = {
+        _type: 'subcommand',
+        _name: '',
+        _description: '',
+        _options: [] as any[],
+        setName: (name: string) => {
+          subcommandBuilder._name = name;
+          return subcommandBuilder;
+        },
+        setDescription: (description: string) => {
+          subcommandBuilder._description = description;
+          return subcommandBuilder;
+        },
+        addStringOption: (builderFn: (opt: any) => any) => {
+          const optBuilder = {
+            _type: 'string',
+            _name: '',
+            _description: '',
+            _required: false,
+            _autocomplete: false,
+            setName: (name: string) => {
+              optBuilder._name = name;
+              return optBuilder;
+            },
+            setDescription: (description: string) => {
+              optBuilder._description = description;
+              return optBuilder;
+            },
+            setRequired: (required: boolean) => {
+              optBuilder._required = required;
+              return optBuilder;
+            },
+            setAutocomplete: (autocomplete: boolean) => {
+              optBuilder._autocomplete = autocomplete;
+              return optBuilder;
+            },
+          };
+          builderFn(optBuilder);
+          subcommandBuilder._options.push({
+            type: 'string',
+            name: optBuilder._name,
+            description: optBuilder._description,
+            required: optBuilder._required,
+            autocomplete: optBuilder._autocomplete,
+          });
+          return subcommandBuilder;
+        },
+      };
+      fn(subcommandBuilder);
+      this._options.push({
+        type: 'subcommand',
+        name: subcommandBuilder._name,
+        description: subcommandBuilder._description,
+        options: subcommandBuilder._options,
+      });
       return this;
     }
     toJSON() {
-      return { name: this._name, description: this._description };
+      return {
+        name: this._name,
+        description: this._description,
+        options: this._options,
+      };
     }
   }
 
@@ -286,8 +374,16 @@ function createInteraction(overrides: {
   userId?: string;
   userTag?: string;
   isChatInputCommand?: boolean;
+  isAutocomplete?: boolean;
   messageOption?: string;
+  subcommand?: string;
+  stringOptions?: Record<string, string | null>;
+  focusedName?: string;
+  focusedValue?: string;
 }) {
+  const subcommand = overrides.subcommand ?? null;
+  const stringOptions = overrides.stringOptions ?? {};
+
   return {
     channelId: overrides.channelId ?? '1234567890123456',
     commandName: overrides.commandName ?? 'clear',
@@ -297,11 +393,34 @@ function createInteraction(overrides: {
     },
     options: {
       getString: vi.fn((name: string) =>
-        name === 'message' ? (overrides.messageOption ?? null) : null,
+        name === 'message'
+          ? (overrides.messageOption ?? null)
+          : (stringOptions[name] ?? null),
       ),
+      getSubcommand: vi.fn(() => subcommand),
+      getFocused: vi.fn(() => ({
+        name: overrides.focusedName ?? 'name',
+        value: overrides.focusedValue ?? '',
+      })),
+      data: subcommand
+        ? [
+            {
+              name: subcommand,
+              options: Object.entries(stringOptions).map(([name, value]) => ({
+                name,
+                value,
+              })),
+            },
+          ]
+        : Object.entries(stringOptions).map(([name, value]) => ({
+            name,
+            value,
+          })),
     },
     isChatInputCommand: () => overrides.isChatInputCommand ?? true,
+    isAutocomplete: () => overrides.isAutocomplete ?? false,
     reply: vi.fn().mockResolvedValue(undefined),
+    respond: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -1085,6 +1204,16 @@ describe('DiscordChannel', () => {
       // Verify total count matches registered commands
       const body = mockRestPut.mock.calls[0][1].body;
       expect(body).toHaveLength(21);
+      const skillsCommand = body.find(
+        (command: any) => command.name === 'skills',
+      );
+      expect(skillsCommand.options).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: 'subcommand', name: 'list' }),
+          expect.objectContaining({ type: 'subcommand', name: 'search' }),
+          expect.objectContaining({ type: 'subcommand', name: 'run' }),
+        ]),
+      );
     });
 
     it('registers interactionCreate handler on connect', async () => {
@@ -1108,7 +1237,62 @@ describe('DiscordChannel', () => {
         'dc:1234567890123456',
         'clear',
         '',
+        undefined,
         expect.any(Function),
+      );
+    });
+
+    it('passes structured slash metadata for /skills run', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+
+      const interaction = createInteraction({
+        commandName: 'skills',
+        subcommand: 'run',
+        stringOptions: {
+          name: 'use-railway',
+          task: 'Check the deploy failure',
+        },
+      });
+      await triggerInteraction(interaction);
+
+      expect(opts.onSlashCommand).toHaveBeenCalledWith(
+        'dc:1234567890123456',
+        'skills',
+        '',
+        {
+          subcommand: 'run',
+          options: {
+            name: 'use-railway',
+            task: 'Check the deploy failure',
+          },
+        },
+        expect.any(Function),
+      );
+    });
+
+    it('responds to /skills autocomplete with bounded matches', async () => {
+      const channel = new DiscordChannel('test-token', createTestOpts());
+      await channel.connect();
+
+      const interaction = createInteraction({
+        commandName: 'skills',
+        isAutocomplete: true,
+        isChatInputCommand: false,
+        subcommand: 'run',
+        focusedName: 'name',
+        focusedValue: 'rail',
+      });
+      await triggerInteraction(interaction);
+
+      expect(interaction.respond).toHaveBeenCalledTimes(1);
+      expect(interaction.respond.mock.calls[0][0]).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            value: expect.any(String),
+          }),
+        ]),
       );
     });
 
@@ -1129,6 +1313,7 @@ describe('DiscordChannel', () => {
           _jid: string,
           _cmd: string,
           _args: string,
+          _meta: any,
           respond: (text: string) => Promise<void>,
         ) => {
           await respond('Session cleared.');

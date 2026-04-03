@@ -1,0 +1,324 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+import YAML from 'yaml';
+
+export interface SkillSummary {
+  name: string;
+  description: string;
+  skillPath: string;
+  rootPath: string;
+  source:
+    | 'repo-agent'
+    | 'repo-codex'
+    | 'user-agent'
+    | 'user-codex'
+    | 'container';
+}
+
+export interface InlineSkillReference {
+  raw: string;
+  name: string;
+  index: number;
+}
+
+export interface UnresolvedInlineSkillReference {
+  reference: InlineSkillReference;
+  suggestion: SkillSummary | null;
+}
+
+export interface ParsedSkillRefs {
+  references: InlineSkillReference[];
+  resolved: SkillSummary[];
+  unresolved: UnresolvedInlineSkillReference[];
+}
+
+export interface SkillCatalogOptions {
+  roots?: string[];
+}
+
+const INLINE_SKILL_RE = /(^|[^\w/])\+([a-z0-9][a-z0-9-_]*)\b/gi;
+
+type SkillSource = SkillSummary['source'];
+
+function dedupePaths(paths: string[]): string[] {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+
+  for (const candidate of paths) {
+    const resolved = path.resolve(candidate);
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    deduped.push(resolved);
+  }
+
+  return deduped;
+}
+
+function classifySkillRoot(rootPath: string): SkillSource {
+  const normalized = rootPath.split(path.sep).join('/');
+  const cwd = process.cwd().split(path.sep).join('/');
+  const home = os.homedir().split(path.sep).join('/');
+
+  if (normalized === `${cwd}/.agents/skills`) return 'repo-agent';
+  if (normalized === `${cwd}/.codex/skills`) return 'repo-codex';
+  if (normalized === `${cwd}/container/skills`) return 'container';
+  if (normalized === `${home}/.agents/skills`) return 'user-agent';
+  if (normalized === `${home}/.codex/skills`) return 'user-codex';
+  if (normalized.includes('/container/skills')) return 'container';
+  if (normalized.includes('/.codex/skills')) return 'user-codex';
+  return 'user-agent';
+}
+
+function getDefaultSkillRoots(): string[] {
+  const cwd = process.cwd();
+  const home = os.homedir();
+  const codeHome = process.env.CODEX_HOME;
+
+  return dedupePaths(
+    [
+      path.join(cwd, '.agents', 'skills'),
+      path.join(cwd, '.codex', 'skills'),
+      path.join(home, '.agents', 'skills'),
+      path.join(home, '.codex', 'skills'),
+      codeHome ? path.join(codeHome, 'skills') : null,
+      path.join(cwd, 'container', 'skills'),
+    ].filter((value): value is string => Boolean(value)),
+  );
+}
+
+function parseFrontmatter(content: string): Record<string, unknown> {
+  const match = content.match(/^---\s*\n([\s\S]*?)\n---\s*(?:\n|$)/);
+  if (!match) return {};
+
+  try {
+    const parsed = YAML.parse(match[1]);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function fallbackDescription(content: string): string {
+  const body = content
+    .replace(/^---\s*\n[\s\S]*?\n---\s*/m, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith('#'));
+
+  return body || '';
+}
+
+function normalizeDescription(description: unknown, content: string): string {
+  if (typeof description === 'string' && description.trim()) {
+    return description.replace(/\s+/g, ' ').trim();
+  }
+
+  return fallbackDescription(content).replace(/\s+/g, ' ').trim();
+}
+
+function readSkillSummary(
+  rootPath: string,
+  skillDirName: string,
+): SkillSummary | null {
+  const skillPath = path.join(rootPath, skillDirName);
+  const skillFile = path.join(skillPath, 'SKILL.md');
+  if (!fs.existsSync(skillFile)) return null;
+
+  let content: string;
+  try {
+    content = fs.readFileSync(skillFile, 'utf8');
+  } catch {
+    return null;
+  }
+
+  const frontmatter = parseFrontmatter(content);
+  const rawName = frontmatter.name;
+  const name =
+    typeof rawName === 'string' && rawName.trim()
+      ? rawName.trim()
+      : skillDirName;
+
+  return {
+    name,
+    description: normalizeDescription(frontmatter.description, content),
+    skillPath,
+    rootPath,
+    source: classifySkillRoot(rootPath),
+  };
+}
+
+function scoreSkillMatch(skill: SkillSummary, query: string): number {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return 1;
+
+  const name = skill.name.toLowerCase();
+  const description = skill.description.toLowerCase();
+
+  if (name === needle) return 120;
+  if (name.startsWith(needle)) return 100 - (name.length - needle.length);
+  if (name.includes(needle)) return 80;
+  if (description.includes(needle)) return 40;
+
+  const compactNeedle = needle.replace(/[\s_-]+/g, '');
+  const compactName = name.replace(/[\s_-]+/g, '');
+  if (compactName.includes(compactNeedle)) return 30;
+
+  return 0;
+}
+
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+
+  const previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+
+  for (let i = 1; i <= a.length; i++) {
+    let diagonal = previous[0];
+    previous[0] = i;
+
+    for (let j = 1; j <= b.length; j++) {
+      const temp = previous[j];
+      previous[j] = Math.min(
+        previous[j] + 1,
+        previous[j - 1] + 1,
+        diagonal + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+      diagonal = temp;
+    }
+  }
+
+  return previous[b.length];
+}
+
+export function listSkills(options: SkillCatalogOptions = {}): SkillSummary[] {
+  const roots = options.roots
+    ? dedupePaths(options.roots)
+    : getDefaultSkillRoots();
+  const byName = new Map<string, SkillSummary>();
+
+  for (const rootPath of roots) {
+    if (!fs.existsSync(rootPath)) continue;
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(rootPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const summary = readSkillSummary(rootPath, entry.name);
+      if (!summary) continue;
+
+      const key = summary.name.toLowerCase();
+      if (!byName.has(key)) {
+        byName.set(key, summary);
+      }
+    }
+  }
+
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function findSkillByName(
+  name: string,
+  options: SkillCatalogOptions = {},
+): SkillSummary | null {
+  const needle = name.trim().toLowerCase();
+  if (!needle) return null;
+
+  return (
+    listSkills(options).find((skill) => skill.name.toLowerCase() === needle) ||
+    null
+  );
+}
+
+export function searchSkills(
+  query: string,
+  options: SkillCatalogOptions = {},
+): SkillSummary[] {
+  const skills = listSkills(options);
+  const scored = skills
+    .map((skill) => ({
+      skill,
+      score: scoreSkillMatch(skill, query),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort(
+      (a, b) => b.score - a.score || a.skill.name.localeCompare(b.skill.name),
+    );
+
+  return scored.map((entry) => entry.skill);
+}
+
+export function suggestSkill(
+  input: string,
+  options: SkillCatalogOptions = {},
+): SkillSummary | null {
+  const needle = input.trim().toLowerCase();
+  if (!needle) return null;
+
+  const skills = listSkills(options);
+  let best: { skill: SkillSummary; distance: number } | null = null;
+
+  for (const skill of skills) {
+    const distance = levenshtein(needle, skill.name.toLowerCase());
+    if (
+      !best ||
+      distance < best.distance ||
+      (distance === best.distance &&
+        skill.name.localeCompare(best.skill.name) < 0)
+    ) {
+      best = { skill, distance };
+    }
+  }
+
+  if (!best) return null;
+
+  const threshold = Math.max(2, Math.ceil(needle.length * 0.25));
+  return best.distance <= threshold ? best.skill : null;
+}
+
+export function formatSkillInlineToken(name: string): string {
+  return `+${name}`;
+}
+
+export function parseInlineSkillRefs(
+  text: string,
+  options: SkillCatalogOptions = {},
+): ParsedSkillRefs {
+  const references: InlineSkillReference[] = [];
+  const seenByName = new Set<string>();
+
+  for (const match of text.matchAll(INLINE_SKILL_RE)) {
+    const raw = `+${match[2]}`;
+    const name = match[2];
+    const index = (match.index || 0) + match[1].length;
+    const key = name.toLowerCase();
+    if (seenByName.has(key)) continue;
+    seenByName.add(key);
+    references.push({ raw, name, index });
+  }
+
+  const resolved: SkillSummary[] = [];
+  const unresolved: UnresolvedInlineSkillReference[] = [];
+
+  for (const reference of references) {
+    const skill = findSkillByName(reference.name, options);
+    if (skill) {
+      resolved.push(skill);
+      continue;
+    }
+
+    unresolved.push({
+      reference,
+      suggestion: suggestSkill(reference.name, options),
+    });
+  }
+
+  return { references, resolved, unresolved };
+}
