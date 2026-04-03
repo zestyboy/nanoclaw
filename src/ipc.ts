@@ -1341,16 +1341,20 @@ async function autoCommitSkillChange(
     // Scope staging to the skill directory to avoid committing unrelated changes
     const addTarget = skillName ? `-- "${skillName}"` : '-A';
     execSync(`git add ${addTarget}`, { cwd: skillRoot, stdio: 'pipe' });
-    // Check if there are staged changes
+    // Check if there are staged changes for this skill
     try {
       execSync('git diff --cached --quiet', { cwd: skillRoot, stdio: 'pipe' });
       // No changes staged — skip commit
     } catch {
-      // Non-zero exit = there are staged changes
-      execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, {
-        cwd: skillRoot,
-        stdio: 'pipe',
-      });
+      // Non-zero exit = there are staged changes — commit only the skill path
+      const commitTarget = skillName ? `-- "${skillName}"` : '';
+      execSync(
+        `git commit -m "${message.replace(/"/g, '\\"')}" ${commitTarget}`,
+        {
+          cwd: skillRoot,
+          stdio: 'pipe',
+        },
+      );
       logger.info({ skillRoot, message }, 'Auto-committed skill change');
     }
   } catch (err) {
