@@ -2,6 +2,8 @@
 
 Personal Claude assistant. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
 
+This file is the canonical repo-level instruction file. `AGENTS.md` is mirrored from it for Codex CLI compatibility. Per-group instructions in this repo continue to live in `groups/{name}/CLAUDE.md`.
+
 ## Quick Context
 
 Single Node.js process with skill-based channel system. Channels (WhatsApp, Telegram, Slack, Discord, Gmail) are skills that self-register at startup. Messages route to Claude Agent SDK running in containers (Linux VMs). Each group has isolated filesystem and memory.
