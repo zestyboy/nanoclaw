@@ -95,6 +95,12 @@ if [ -d "/app/groups" ]; then
   chown -R node:node /data/groups
 fi
 
+# Create personal skill library directory on persistent volume
+SKILLS_PATH="${SYNCTHING_SKILLS_FOLDER_PATH:-/data/ai-skills}"
+mkdir -p "$SKILLS_PATH"
+chown node:node "$SKILLS_PATH"
+export AI_SKILLS_HOME="$SKILLS_PATH"
+
 # Start Syncthing for project-only sync (if configured)
 if [ "${SYNCTHING_ENABLED:-false}" = "true" ]; then
   if [ ! -f /data/syncthing/config.xml ] || [ ! -f /data/syncthing/cert.pem ] || [ ! -f /data/syncthing/key.pem ]; then

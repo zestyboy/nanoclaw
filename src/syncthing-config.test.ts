@@ -73,6 +73,9 @@ describe('syncthing-config', () => {
       versioningDays: 45,
       waitTimeoutMs: 30000,
       guiAddress: '127.0.0.1:8384',
+      skillsFolderId: 'ai-skills',
+      skillsFolderPath: '/data/ai-skills',
+      skillsSyncEnabled: false,
     });
 
     expect(result.warnings).toEqual([]);
@@ -134,6 +137,9 @@ describe('syncthing-config', () => {
         versioningDays: 30,
         waitTimeoutMs: 30000,
         guiAddress: '127.0.0.1:8384',
+        skillsFolderId: 'ai-skills',
+        skillsFolderPath: '/data/ai-skills',
+        skillsSyncEnabled: false,
       },
     );
 
@@ -142,5 +148,58 @@ describe('syncthing-config', () => {
     expect(result.warnings).toContain(
       'SYNCTHING_PEER_DEVICE_ID is not set; Syncthing will start without the shared projects folder.',
     );
+  });
+
+  it('includes skills folder when skillsSyncEnabled is true', () => {
+    const result = buildDesiredSyncthingConfig(baseConfig(), {
+      homeDir: '/data/syncthing',
+      apiBaseUrl: 'http://127.0.0.1:8384',
+      folderId: 'nanoclaw-projects',
+      folderPath: '/data/projects',
+      peerDeviceId: 'PEERDEVICEID',
+      versioningDays: 30,
+      waitTimeoutMs: 30000,
+      guiAddress: '127.0.0.1:8384',
+      skillsFolderId: 'ai-skills',
+      skillsFolderPath: '/data/ai-skills',
+      skillsSyncEnabled: true,
+    });
+
+    expect(result.warnings).toEqual([]);
+    const folderIds = result.config.folders?.map((f) => f.id) ?? [];
+    expect(folderIds).toContain('nanoclaw-projects');
+    expect(folderIds).toContain('ai-skills');
+
+    const skillsFolder = result.config.folders?.find(
+      (f) => f.id === 'ai-skills',
+    );
+    expect(skillsFolder).toEqual(
+      expect.objectContaining({
+        id: 'ai-skills',
+        label: 'AI Skills Library',
+        path: '/data/ai-skills',
+        type: 'sendreceive',
+      }),
+    );
+  });
+
+  it('excludes skills folder when skillsSyncEnabled is false', () => {
+    const result = buildDesiredSyncthingConfig(baseConfig(), {
+      homeDir: '/data/syncthing',
+      apiBaseUrl: 'http://127.0.0.1:8384',
+      folderId: 'nanoclaw-projects',
+      folderPath: '/data/projects',
+      peerDeviceId: 'PEERDEVICEID',
+      versioningDays: 30,
+      waitTimeoutMs: 30000,
+      guiAddress: '127.0.0.1:8384',
+      skillsFolderId: 'ai-skills',
+      skillsFolderPath: '/data/ai-skills',
+      skillsSyncEnabled: false,
+    });
+
+    const folderIds = result.config.folders?.map((f) => f.id) ?? [];
+    expect(folderIds).toContain('nanoclaw-projects');
+    expect(folderIds).not.toContain('ai-skills');
   });
 });

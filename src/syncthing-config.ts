@@ -10,6 +10,9 @@ export interface SyncthingEnv {
   versioningDays: number;
   waitTimeoutMs: number;
   guiAddress: string;
+  skillsFolderId: string;
+  skillsFolderPath: string;
+  skillsSyncEnabled: boolean;
 }
 
 export interface SyncthingConfigResponse {
@@ -57,6 +60,8 @@ const DEFAULT_FOLDER_PATH = '/data/projects';
 const DEFAULT_VERSIONING_DAYS = 30;
 const DEFAULT_WAIT_TIMEOUT_MS = 30000;
 const DEFAULT_GUI_ADDRESS = '127.0.0.1:8384';
+const DEFAULT_SKILLS_FOLDER_ID = 'ai-skills';
+const DEFAULT_SKILLS_FOLDER_PATH = '/data/ai-skills';
 
 function parsePositiveInteger(
   rawValue: string | undefined,
@@ -101,6 +106,10 @@ export function readSyncthingEnv(
       DEFAULT_WAIT_TIMEOUT_MS,
     ),
     guiAddress: env.SYNCTHING_GUI_ADDRESS || DEFAULT_GUI_ADDRESS,
+    skillsFolderId: env.SYNCTHING_SKILLS_FOLDER_ID || DEFAULT_SKILLS_FOLDER_ID,
+    skillsFolderPath:
+      env.SYNCTHING_SKILLS_FOLDER_PATH || DEFAULT_SKILLS_FOLDER_PATH,
+    skillsSyncEnabled: env.SYNCTHING_SKILLS_ENABLED === 'true',
   };
 }
 
@@ -163,6 +172,26 @@ function buildProjectsFolder(
   };
 }
 
+function buildSkillsFolder(
+  defaultFolder: Record<string, unknown> | undefined,
+  env: SyncthingEnv,
+): SyncthingFolder {
+  const folder = cloneJson(defaultFolder || {});
+  return {
+    ...folder,
+    id: env.skillsFolderId,
+    label: 'AI Skills Library',
+    path: env.skillsFolderPath,
+    type: 'sendreceive',
+    rescanIntervalS: 3600,
+    fsWatcherEnabled: true,
+    fsWatcherDelayS: 10,
+    ignorePerms: true,
+    devices: [{ deviceID: env.peerDeviceId, introducedBy: '' }],
+    versioning: {},
+  };
+}
+
 export function buildDesiredSyncthingConfig(
   current: SyncthingConfigResponse,
   env: SyncthingEnv,
@@ -197,12 +226,15 @@ export function buildDesiredSyncthingConfig(
     (device) => device.deviceID !== env.peerDeviceId,
   );
   const folders = existingFolders.filter(
-    (folder) => folder.id !== env.folderId,
+    (folder) => folder.id !== env.folderId && folder.id !== env.skillsFolderId,
   );
 
   if (env.peerDeviceId) {
     devices.push(buildPeerDevice(defaultDevice, env.peerDeviceId));
     folders.push(buildProjectsFolder(defaultFolder, env));
+    if (env.skillsSyncEnabled) {
+      folders.push(buildSkillsFolder(defaultFolder, env));
+    }
   } else {
     warnings.push(
       'SYNCTHING_PEER_DEVICE_ID is not set; Syncthing will start without the shared projects folder.',

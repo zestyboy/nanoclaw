@@ -1245,10 +1245,24 @@ The personal skill library at `~/.ai/skills/` is the user's canonical, portable 
 
 **Managing skills from Claude Code:** Use the `/manage-skills` skill for CRUD with auto-git.
 
-**Setting up on a new device:**
+**Setting up on a new laptop:**
 1. Clone the skill library: `git clone <remote> ~/.ai/skills`
 2. Create consumer symlinks: `ln -s ~/.ai/skills ~/.claude/skills` (etc.)
 3. Add `~/.ai/skills` as a Syncthing shared folder
+
+**Setting up on Railway:**
+
+Railway instances sync the skill library via Syncthing to `/data/ai-skills` on the persistent volume. To enable:
+
+1. Set these environment variables in Railway:
+   - `SYNCTHING_SKILLS_ENABLED=true` — enables the ai-skills Syncthing folder
+   - `AI_SKILLS_HOME=/data/ai-skills` — tells NanoClaw where skills live (set automatically by the entrypoint)
+2. The entrypoint (`docker-entrypoint-railway.sh`) creates `/data/ai-skills` on startup and exports `AI_SKILLS_HOME`
+3. `configureSyncthingFromEnv()` in `syncthing-config.ts` adds the `ai-skills` shared folder alongside the existing `nanoclaw-projects` folder
+4. Accept the folder share on the Railway device in Syncthing (one-time)
+5. Skills sync from the laptop in real-time; NanoClaw's `syncRuntimeSkills()` picks them up on next container start
+
+Optional env vars: `SYNCTHING_SKILLS_FOLDER_ID` (default: `ai-skills`), `SYNCTHING_SKILLS_FOLDER_PATH` (default: `/data/ai-skills`)
 
 ### Container Skills
 
