@@ -22,6 +22,7 @@ import './channels/index.js';
 import {
   getChannelFactory,
   getRegisteredChannelNames,
+  SlashCommandMeta,
 } from './channels/registry.js';
 import {
   ContainerOutput,
@@ -114,6 +115,14 @@ import {
   clearActiveSession,
   resetGroupSessionFilesystem,
 } from './session-clear.js';
+import {
+  findSkillByName,
+  formatSkillInlineToken,
+  listSkills,
+  parseInlineSkillRefs,
+  searchSkills,
+  suggestSkill,
+} from './skills.js';
 
 const execAsync = promisify(execCb);
 
@@ -200,6 +209,120 @@ function clearSessionState(groupFolder: string): void {
   delete sessions[groupFolder];
   deleteSession(groupFolder);
   deleteSessionMetrics(groupFolder);
+}
+
+function describeSkillReferenceFeedback(text: string): string | null {
+  const parsed = parseInlineSkillRefs(text);
+  if (parsed.references.length === 0) return null;
+
+  const lines: string[] = [];
+
+  if (parsed.resolved.length > 0) {
+    lines.push(
+      `Skills detected: ${parsed.resolved.map((skill) => skill.name).join(', ')}`,
+    );
+  }
+
+  for (const unresolved of parsed.unresolved) {
+    lines.push(`Unknown skill: ${unresolved.reference.raw}`);
+    if (unresolved.suggestion) {
+      lines.push(
+        `Did you mean: ${formatSkillInlineToken(unresolved.suggestion.name)}`,
+      );
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function collectSkillRefsForMessages(messages: NewMessage[]): {
+  resolved: string[];
+} {
+  const resolvedNames = new Set<string>();
+
+  for (const message of messages) {
+    const parsed = parseInlineSkillRefs(message.content);
+    for (const skill of parsed.resolved) {
+      resolvedNames.add(skill.name);
+    }
+  }
+
+  return { resolved: [...resolvedNames] };
+}
+
+function prependSkillInstructions(
+  prompt: string,
+  skillNames: string[],
+): string {
+  if (skillNames.length === 0) return prompt;
+
+  const lines = [
+    '<skill-invocation>',
+    'The user explicitly referenced these skills. Load and follow them for this task if they are available in the current environment:',
+    ...skillNames.map((name) => `- ${name}`),
+    '</skill-invocation>',
+  ];
+
+  return `${lines.join('\n')}\n${prompt}`;
+}
+
+function formatSkillAwarePrompt(
+  messages: NewMessage[],
+  timezone: string,
+): string {
+  const prompt = formatMessages(messages, timezone);
+  const { resolved } = collectSkillRefsForMessages(messages);
+  return prependSkillInstructions(prompt, resolved);
+}
+
+function formatSkillsListResponse(limit = 15): string {
+  const skills = listSkills();
+  if (skills.length === 0) {
+    return 'No skills installed.';
+  }
+
+  const visible = skills.slice(0, limit);
+  const lines = visible.map(
+    (skill) => `• **${skill.name}** — ${skill.description.slice(0, 120)}`,
+  );
+
+  if (skills.length > visible.length) {
+    lines.push(
+      `…and ${skills.length - visible.length} more. Use \`/skills search\` to narrow it down.`,
+    );
+  }
+
+  return `**Available skills (${skills.length}):**\n${lines.join('\n')}`;
+}
+
+function formatSkillsSearchResponse(query: string): string {
+  const matches = searchSkills(query).slice(0, 8);
+  if (matches.length === 0) {
+    return `No skills matched "${query}".`;
+  }
+
+  const lines = matches.map(
+    (skill) =>
+      `• **${skill.name}** — ${skill.description.slice(0, 120)}\n  Inline token: \`${formatSkillInlineToken(skill.name)}\``,
+  );
+
+  return `**Matching skills for "${query}":**\n${lines.join('\n')}`;
+}
+
+function buildSlashSkillRunMessage(
+  group: RegisteredGroup,
+  skillName: string,
+  task?: string,
+): string {
+  const body = task?.trim()
+    ? `Use ${formatSkillInlineToken(skillName)} for this task: ${task.trim()}`
+    : `Use ${formatSkillInlineToken(skillName)} for this task.`;
+
+  if (!group.isMain && group.requiresTrigger !== false) {
+    return `${group.trigger} ${body}`.trim();
+  }
+
+  return body;
 }
 
 async function sendSessionWarnings(
@@ -457,7 +580,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   activeReplySourceJids[chatJid] = extractReplySourceChannelJid(missedMessages);
-  const prompt = formatMessages(missedMessages, TIMEZONE);
+  const prompt = formatSkillAwarePrompt(missedMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -839,7 +962,7 @@ async function startMessageLoop(): Promise<void> {
             allPending.length > 0 ? allPending : groupMessages;
           activeReplySourceJids[chatJid] =
             extractReplySourceChannelJid(messagesToSend);
-          const formatted = formatMessages(messagesToSend, TIMEZONE);
+          const formatted = formatSkillAwarePrompt(messagesToSend, TIMEZONE);
 
           if (queue.sendMessage(chatJid, formatted)) {
             logger.debug(
@@ -1012,6 +1135,23 @@ async function main(): Promise<void> {
       }
       storeMessage(msg);
 
+      if (!msg.is_from_me && !msg.is_bot_message && chatJid.startsWith('dc:')) {
+        const feedback = describeSkillReferenceFeedback(msg.content);
+        if (feedback) {
+          const channel = findChannel(channels, chatJid);
+          if (channel) {
+            channel
+              .sendMessage(chatJid, feedback, { silent: true })
+              .catch((err) =>
+                logger.warn(
+                  { chatJid, err },
+                  'Failed to send Discord skill recognition feedback',
+                ),
+              );
+          }
+        }
+      }
+
       // Mirror user messages to active mirror targets
       if (!msg.is_from_me && !msg.is_bot_message) {
         recordInbound(chatJid, msg.content, msg.sender_name);
@@ -1043,6 +1183,7 @@ async function main(): Promise<void> {
       chatJid: string,
       command: string,
       args: string,
+      meta: SlashCommandMeta | undefined,
       respond: (text: string) => Promise<void>,
     ) => {
       const group = registeredGroups[chatJid];
@@ -1355,39 +1496,57 @@ async function main(): Promise<void> {
       }
 
       if (command === 'skills') {
-        const skillsDir = path.join(process.cwd(), 'container', 'skills');
-        try {
-          if (!fs.existsSync(skillsDir)) {
-            respond('No skills installed.').catch(() => {});
-            return;
-          }
-          const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
-          const skills: { name: string; description: string }[] = [];
-          for (const entry of entries) {
-            if (!entry.isDirectory()) continue;
-            const skillFile = path.join(skillsDir, entry.name, 'SKILL.md');
-            if (!fs.existsSync(skillFile)) continue;
-            const content = fs.readFileSync(skillFile, 'utf-8');
-            const nameMatch = content.match(/^name:\s*(.+)$/m);
-            const descMatch = content.match(/^description:\s*(.+)$/m);
-            skills.push({
-              name: nameMatch?.[1]?.trim() || entry.name,
-              description: descMatch?.[1]?.trim().slice(0, 100) || '',
-            });
-          }
-          if (skills.length === 0) {
-            respond('No skills installed.').catch(() => {});
-            return;
-          }
-          const formatted = skills
-            .map((s) => `• **${s.name}** — ${s.description}`)
-            .join('\n');
-          respond(
-            `**Available skills (${skills.length}):**\n${formatted}`,
-          ).catch(() => {});
-        } catch {
-          respond('Failed to read skills.').catch(() => {});
+        const subcommand = meta?.subcommand || 'list';
+
+        if (subcommand === 'list') {
+          respond(formatSkillsListResponse()).catch(() => {});
+          return;
         }
+
+        if (subcommand === 'search') {
+          const query = meta?.options?.query?.trim() || args.trim();
+          if (!query) {
+            respond(
+              'Provide a query, for example `/skills search query:rail`.',
+            ).catch(() => {});
+            return;
+          }
+          respond(formatSkillsSearchResponse(query)).catch(() => {});
+          return;
+        }
+
+        if (subcommand === 'run') {
+          const skillName = meta?.options?.name?.trim() || args.trim();
+          const task = meta?.options?.task?.trim();
+          const skill = skillName ? findSkillByName(skillName) : null;
+
+          if (!skill) {
+            const suggestion = skillName ? suggestSkill(skillName) : null;
+            respond(
+              suggestion
+                ? `Unknown skill: ${formatSkillInlineToken(skillName)}\nDid you mean: ${formatSkillInlineToken(suggestion.name)}`
+                : 'Select a valid skill name.',
+            ).catch(() => {});
+            return;
+          }
+
+          storeMessage({
+            id: `skills-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            chat_jid: chatJid,
+            sender: 'me',
+            sender_name: 'me',
+            content: buildSlashSkillRunMessage(group, skill.name, task),
+            timestamp: new Date().toISOString(),
+            is_from_me: true,
+          });
+          queue.enqueueMessageCheck(chatJid);
+          respond(
+            `Queued ${formatSkillInlineToken(skill.name)}${task ? ` for: ${task}` : ''}`,
+          ).catch(() => {});
+          return;
+        }
+
+        respond(`Unknown /skills subcommand: ${subcommand}`).catch(() => {});
         return;
       }
 

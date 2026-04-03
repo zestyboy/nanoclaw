@@ -52,7 +52,7 @@ Think of it as: you text a thought to your PA. If it's a quick task, the PA hand
 │  Agent Runner (Claude Agent SDK)                                   │
 │  • Working dir: /workspace/group (mounted from host)               │
 │  • Tools: Bash, files, web, browser, MCP tools (IPC-based)        │
-│  • Skills: loaded from container/skills/                           │
+│  • Skills: session runtime synced into .claude/skills/             │
 │  • Session: persisted in data/sessions/{group}/.claude/            │
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -73,6 +73,7 @@ Think of it as: you text a thought to your PA. If it's a quick task, the PA hand
 | `src/container-runtime.ts` | Runtime abstraction (Docker vs Apple Container) |
 | `src/task-scheduler.ts` | Runs scheduled tasks at due times |
 | `src/db.ts` | SQLite: messages, chats, sessions, groups, tasks |
+| `src/skills.ts` | Shared skill catalog, search, typo suggestion, and inline `+skill-name` parsing |
 | `src/mount-security.ts` | Validates additional mounts against allowlist |
 | `src/credential-proxy.ts` | HTTP proxy that injects API keys without exposing them to containers |
 | `src/mirror.ts` | Message mirroring state: activate/deactivate, ring buffer, retroactive lookback |
@@ -1203,6 +1204,15 @@ NanoClaw uses Claude Code skills (`.claude/skills/`) for setup and customization
 | `/convert-to-apple-container` | Switch from Docker to Apple Container |
 | `/update-nanoclaw` | Bring upstream updates into customized install |
 
+### Runtime Skill Layers
+
+NanoClaw now has two related but distinct skill surfaces:
+
+- **Host-side discovery catalog** — used for `/skills list`, `/skills search`, Discord autocomplete, and inline `+skill-name` recognition
+- **Session runtime skills** — copied into each agent session's `.claude/skills` so the agent can actually load them
+
+The discovery/catalog logic lives in `src/skills.ts`. Runtime session setup still copies built-in agent-facing skills into session state during container or Railway runner startup.
+
 ### Container Skills
 
 Inside containers, agents have access to skill prompts at `/app/container/skills/`:
@@ -1217,16 +1227,30 @@ Inside containers, agents have access to skill prompts at `/app/container/skills
 
 ## 15. Slash Commands
 
-Discord slash commands provide direct control over sessions, monitoring, and Brain Router routing. See [SLASH-COMMANDS.md](SLASH-COMMANDS.md) for the full cheat sheet.
+Discord slash commands provide direct control over sessions, monitoring, Brain Router routing, and skill discovery. See [SLASH-COMMANDS.md](SLASH-COMMANDS.md) for the full cheat sheet.
 
 ### Command Categories
 
 | Category | Commands | Description |
 |----------|----------|-------------|
 | **Session Management** | `/clear`, `/compact`, `/rename`, `/resume`, `/branch`, `/effort`, `/model` | Control conversation sessions — create, switch, fork, compact, rename, configure model/effort |
-| **Monitoring** | `/context`, `/cost`, `/diff`, `/export`, `/tasks`, `/hooks`, `/skills` | Read-only inspection of session state, costs, files, configuration, and API-confirmed model info |
+| **Monitoring** | `/context`, `/cost`, `/diff`, `/export`, `/tasks`, `/hooks` | Read-only inspection of session state, costs, files, configuration, and API-confirmed model info |
+| **Skill Discovery** | `/skills list`, `/skills search`, `/skills run` | Browse available skills, search by topic, and queue normal work with an explicitly selected skill |
 | **Actions** | `/reload`, `/rewind` | Reload agent configuration or revert file changes |
 | **Brain Router** | `/catalog`, `/execute`, `/knowledge`, `/ask` | Route messages to the Brain Router for project and knowledge operations |
+
+### Inline Skill References
+
+Discord also supports lightweight inline skill references inside ordinary messages:
+
+- `+skill-name`
+
+Examples:
+
+- `Use +second-brain to save this note`
+- `Use +use-railway and +document-release for this task`
+
+Recognition is server-side, not composer-native. NanoClaw responds with confirmation for exact matches and typo suggestions for close misspellings. Exact matches are injected into the normal agent prompt as explicit skill-loading instructions; suggestions are not auto-applied.
 
 ### Invocation Architecture
 
@@ -1242,8 +1266,9 @@ Commands reach the system through four distinct paths:
 
 ### State Impact
 
-- **Read-only commands** (`/context`, `/cost`, `/diff`, `/export`, `/tasks`, `/hooks`, `/skills`) are always safe — they read from the DB or filesystem and return formatted results.
+- **Read-only commands** (`/context`, `/cost`, `/diff`, `/export`, `/tasks`, `/hooks`, `/skills list`, `/skills search`) are always safe — they read from the DB or filesystem and return formatted results.
 - **Session commands** (`/clear`, `/rename`, `/resume`, `/effort`, `/compact`, `/branch`) modify the `sessions`, `session_history`, or `group_settings` SQLite tables.
+- **Queued skill execution** (`/skills run`) does not bypass routing — it injects a synthetic message into the normal chat/session flow so existing container, queue, and session behavior is preserved.
 - **Container commands** (`/clear`, `/reload`, `/resume`, `/compact`) close the active container's stdin, causing it to exit after completing in-flight work.
 - **Filesystem commands** (`/rewind`) run `git checkout . && git clean -fd` in the group workspace — destructive to uncommitted changes.
 
