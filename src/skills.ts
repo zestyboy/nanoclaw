@@ -218,7 +218,12 @@ function scanSkills(roots: string[]): SkillSummary[] {
     }
 
     for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
+      if (
+        !entry.isDirectory() ||
+        entry.name.startsWith('_') ||
+        entry.name.startsWith('.')
+      )
+        continue;
       const summary = readSkillSummary(rootPath, entry.name);
       if (summary) {
         const key = summary.name.toLowerCase();
