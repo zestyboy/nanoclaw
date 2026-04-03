@@ -190,6 +190,51 @@ description: Railway deploys
     expect(parsed.resolved).toHaveLength(1);
   });
 
+  it('ignores non-skill numeric plus tokens', () => {
+    const root = makeRoot();
+    writeSkill(
+      root,
+      'public-knowledge',
+      `---
+name: public-knowledge
+description: Work vault
+---`,
+    );
+
+    const parsed = parseInlineSkillRefs('Price is +5 today', { roots: [root] });
+
+    expect(parsed.references).toHaveLength(0);
+    expect(parsed.resolved).toHaveLength(0);
+    expect(parsed.unresolved).toHaveLength(0);
+  });
+
+  it('suggests close slug typos but ignores unrelated unknown tokens', () => {
+    const root = makeRoot();
+    writeSkill(
+      root,
+      'public-knowledge',
+      `---
+name: public-knowledge
+description: Work vault
+---`,
+    );
+
+    const typoParsed = parseInlineSkillRefs('+public-knoledge', {
+      roots: [root],
+    });
+    expect(typoParsed.unresolved).toEqual([
+      expect.objectContaining({
+        reference: expect.objectContaining({ raw: '+public-knoledge' }),
+        suggestion: expect.objectContaining({ name: 'public-knowledge' }),
+      }),
+    ]);
+
+    const unrelatedParsed = parseInlineSkillRefs('+totally-random-token', {
+      roots: [root],
+    });
+    expect(unrelatedParsed.unresolved).toHaveLength(0);
+  });
+
   it('formats inline skill tokens consistently', () => {
     expect(formatSkillInlineToken('use-railway')).toBe('+use-railway');
   });

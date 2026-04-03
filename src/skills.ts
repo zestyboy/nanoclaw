@@ -38,7 +38,7 @@ export interface SkillCatalogOptions {
   roots?: string[];
 }
 
-const INLINE_SKILL_RE = /(^|[^\w/])\+([a-z0-9][a-z0-9-_]*)\b/gi;
+const INLINE_SKILL_RE = /(^|[^\w/])\+([a-z][a-z0-9-_]*)\b/gi;
 
 type SkillSource = SkillSummary['source'];
 
@@ -314,9 +314,14 @@ export function parseInlineSkillRefs(
       continue;
     }
 
+    const suggestion = suggestSkill(reference.name, options);
+    if (!suggestion) {
+      continue;
+    }
+
     unresolved.push({
       reference,
-      suggestion: suggestSkill(reference.name, options),
+      suggestion,
     });
   }
 
