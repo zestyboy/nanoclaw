@@ -761,10 +761,9 @@ export class DiscordChannel implements Channel {
           typeof entry === 'object' &&
           'name' in entry &&
           typeof entry.name === 'string' &&
-          'value' in entry &&
-          typeof entry.value === 'string'
+          'value' in entry
         ) {
-          acc[entry.name] = entry.value;
+          acc[entry.name] = String(entry.value);
         }
         return acc;
       },
