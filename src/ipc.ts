@@ -1260,6 +1260,7 @@ export async function processTaskIpc(
           data.type === 'skill:create'
             ? `Add ${data.skill_name}`
             : `Update ${data.skill_name}`,
+          data.skill_name,
         );
 
         logger.info(
@@ -1308,7 +1309,11 @@ export async function processTaskIpc(
         }
 
         fs.rmSync(skillDir, { recursive: true, force: true });
-        await autoCommitSkillChange(skillRoot, `Remove ${data.skill_name}`);
+        await autoCommitSkillChange(
+          skillRoot,
+          `Remove ${data.skill_name}`,
+          data.skill_name,
+        );
 
         logger.info(
           { skill: data.skill_name, scope },
@@ -1329,10 +1334,13 @@ export async function processTaskIpc(
 async function autoCommitSkillChange(
   skillRoot: string,
   message: string,
+  skillName?: string,
 ): Promise<void> {
   const { execSync } = await import('child_process');
   try {
-    execSync('git add -A', { cwd: skillRoot, stdio: 'pipe' });
+    // Scope staging to the skill directory to avoid committing unrelated changes
+    const addTarget = skillName ? `-- "${skillName}"` : '-A';
+    execSync(`git add ${addTarget}`, { cwd: skillRoot, stdio: 'pipe' });
     // Check if there are staged changes
     try {
       execSync('git diff --cached --quiet', { cwd: skillRoot, stdio: 'pipe' });
