@@ -122,6 +122,7 @@ import {
   parseInlineSkillRefs,
   searchSkills,
   suggestSkill,
+  type SkillSummary,
 } from './skills.js';
 
 const execAsync = promisify(execCb);
@@ -275,6 +276,20 @@ function formatSkillAwarePrompt(
   return prependSkillInstructions(prompt, resolved);
 }
 
+function skillGroupTag(skill: SkillSummary): string | null {
+  if (skill.package === '.system') return 'codex-builtin';
+  if (skill.package) return skill.package;
+  if (skill.source === 'container') return 'built-in';
+  return null;
+}
+
+function skillGroupLabel(tag: string | null): string {
+  if (!tag) return 'Personal';
+  if (tag === 'built-in') return 'NanoClaw Built-in';
+  if (tag === 'codex-builtin') return 'Codex Built-in';
+  return tag.charAt(0).toUpperCase() + tag.slice(1);
+}
+
 function formatSkillsListPages(): string[] {
   const skills = listSkills();
   if (skills.length === 0) {
@@ -287,14 +302,7 @@ function formatSkillsListPages(): string[] {
   let current = `**Available skills (${skills.length}):**\n`;
 
   for (const skill of skills) {
-    const tag =
-      skill.package === '.system'
-        ? 'codex-builtin'
-        : skill.package
-          ? skill.package
-          : skill.source === 'container'
-            ? 'built-in'
-            : null;
+    const tag = skillGroupTag(skill);
     const label = tag
       ? `• **${skill.name}** (${tag}) — ${skill.description.slice(0, 70)}\n`
       : `• **${skill.name}** — ${skill.description.slice(0, 80)}\n`;
@@ -303,6 +311,64 @@ function formatSkillsListPages(): string[] {
       current = '';
     }
     current += label;
+  }
+  if (current.trim()) {
+    pages.push(current.trimEnd());
+  }
+
+  return pages;
+}
+
+function formatSkillsListGroupedPages(): string[] {
+  const skills = listSkills();
+  if (skills.length === 0) {
+    return ['No skills installed.'];
+  }
+
+  // Group skills by their tag
+  const groups = new Map<string, SkillSummary[]>();
+  for (const skill of skills) {
+    const tag = skillGroupTag(skill) || 'personal';
+    const list = groups.get(tag) || [];
+    list.push(skill);
+    groups.set(tag, list);
+  }
+
+  // Order: personal first, then packages alphabetically, built-ins last
+  const order = [...groups.keys()].sort((a, b) => {
+    const rank = (k: string) =>
+      k === 'personal'
+        ? 0
+        : k === 'built-in'
+          ? 98
+          : k === 'codex-builtin'
+            ? 99
+            : 1;
+    return rank(a) - rank(b) || a.localeCompare(b);
+  });
+
+  const maxLen = 1900;
+  const pages: string[] = [];
+  let current = `**Available skills (${skills.length}):**\n\n`;
+
+  for (const tag of order) {
+    const groupSkills = groups.get(tag)!;
+    const header = `**${skillGroupLabel(tag)}** (${groupSkills.length})\n`;
+    if (current.length + header.length > maxLen) {
+      pages.push(current.trimEnd());
+      current = '';
+    }
+    current += header;
+
+    for (const skill of groupSkills) {
+      const line = `• **${skill.name}** — ${skill.description.slice(0, 75)}\n`;
+      if (current.length + line.length > maxLen) {
+        pages.push(current.trimEnd());
+        current = '';
+      }
+      current += line;
+    }
+    current += '\n';
   }
   if (current.trim()) {
     pages.push(current.trimEnd());
@@ -1515,7 +1581,12 @@ async function main(): Promise<void> {
         const subcommand = meta?.subcommand || 'list';
 
         if (subcommand === 'list') {
-          const pages = formatSkillsListPages();
+          const grouped =
+            meta?.options?.grouped === 'true' ||
+            args.trim().toLowerCase() === 'grouped';
+          const pages = grouped
+            ? formatSkillsListGroupedPages()
+            : formatSkillsListPages();
           respond(pages[0]).catch(() => {});
           // Send additional pages as follow-up channel messages
           for (let i = 1; i < pages.length; i++) {

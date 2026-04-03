@@ -611,7 +611,17 @@ export class DiscordChannel implements Channel {
         .setName('skills')
         .setDescription('Discover and run agent skills')
         .addSubcommand((subcommand) =>
-          subcommand.setName('list').setDescription('List available skills'),
+          subcommand
+            .setName('list')
+            .setDescription('List available skills')
+            .addBooleanOption((opt) =>
+              opt
+                .setName('grouped')
+                .setDescription(
+                  'Group skills by origin (gstack, built-in, personal)',
+                )
+                .setRequired(false),
+            ),
         )
         .addSubcommand((subcommand) =>
           subcommand
