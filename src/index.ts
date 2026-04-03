@@ -275,31 +275,30 @@ function formatSkillAwarePrompt(
   return prependSkillInstructions(prompt, resolved);
 }
 
-function formatSkillsListResponse(): string {
+function formatSkillsListPages(): string[] {
   const skills = listSkills();
   if (skills.length === 0) {
-    return 'No skills installed.';
+    return ['No skills installed.'];
   }
 
-  // Build response within Discord's 2000-char limit
-  const header = `**Available skills (${skills.length}):**\n`;
-  const footer = (remaining: number) =>
-    `…and ${remaining} more. Use \`/skills search\` to narrow it down.`;
-  const maxLen = 1900; // Leave room for footer
-  const lines: string[] = [];
-  let len = header.length;
+  // Split across multiple messages to fit Discord's 2000-char limit
+  const maxLen = 1900;
+  const pages: string[] = [];
+  let current = `**Available skills (${skills.length}):**\n`;
 
   for (const skill of skills) {
-    const line = `• **${skill.name}** — ${skill.description.slice(0, 80)}`;
-    if (len + line.length + 1 > maxLen) {
-      lines.push(footer(skills.length - lines.length));
-      break;
+    const line = `• **${skill.name}** — ${skill.description.slice(0, 80)}\n`;
+    if (current.length + line.length > maxLen) {
+      pages.push(current.trimEnd());
+      current = '';
     }
-    lines.push(line);
-    len += line.length + 1;
+    current += line;
+  }
+  if (current.trim()) {
+    pages.push(current.trimEnd());
   }
 
-  return `${header}${lines.join('\n')}`;
+  return pages;
 }
 
 function formatSkillsSearchResponse(query: string): string {
@@ -1506,7 +1505,12 @@ async function main(): Promise<void> {
         const subcommand = meta?.subcommand || 'list';
 
         if (subcommand === 'list') {
-          respond(formatSkillsListResponse()).catch(() => {});
+          const pages = formatSkillsListPages();
+          respond(pages[0]).catch(() => {});
+          // Send additional pages as follow-up channel messages
+          for (let i = 1; i < pages.length; i++) {
+            sendWithMirror(chatJid, pages[i]).catch(() => {});
+          }
           return;
         }
 
