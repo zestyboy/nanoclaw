@@ -287,9 +287,16 @@ function formatSkillsListPages(): string[] {
   let current = `**Available skills (${skills.length}):**\n`;
 
   for (const skill of skills) {
-    const pkg = skill.package === '.system' ? 'codex-builtin' : skill.package;
-    const label = pkg
-      ? `• **${skill.name}** (${pkg}) — ${skill.description.slice(0, 70)}\n`
+    const tag =
+      skill.package === '.system'
+        ? 'codex-builtin'
+        : skill.package
+          ? skill.package
+          : skill.source === 'container'
+            ? 'built-in'
+            : null;
+    const label = tag
+      ? `• **${skill.name}** (${tag}) — ${skill.description.slice(0, 70)}\n`
       : `• **${skill.name}** — ${skill.description.slice(0, 80)}\n`;
     if (current.length + label.length > maxLen) {
       pages.push(current.trimEnd());
