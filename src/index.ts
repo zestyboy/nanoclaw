@@ -275,24 +275,31 @@ function formatSkillAwarePrompt(
   return prependSkillInstructions(prompt, resolved);
 }
 
-function formatSkillsListResponse(limit = 15): string {
+function formatSkillsListResponse(): string {
   const skills = listSkills();
   if (skills.length === 0) {
     return 'No skills installed.';
   }
 
-  const visible = skills.slice(0, limit);
-  const lines = visible.map(
-    (skill) => `• **${skill.name}** — ${skill.description.slice(0, 120)}`,
-  );
+  // Build response within Discord's 2000-char limit
+  const header = `**Available skills (${skills.length}):**\n`;
+  const footer = (remaining: number) =>
+    `…and ${remaining} more. Use \`/skills search\` to narrow it down.`;
+  const maxLen = 1900; // Leave room for footer
+  const lines: string[] = [];
+  let len = header.length;
 
-  if (skills.length > visible.length) {
-    lines.push(
-      `…and ${skills.length - visible.length} more. Use \`/skills search\` to narrow it down.`,
-    );
+  for (const skill of skills) {
+    const line = `• **${skill.name}** — ${skill.description.slice(0, 80)}`;
+    if (len + line.length + 1 > maxLen) {
+      lines.push(footer(skills.length - lines.length));
+      break;
+    }
+    lines.push(line);
+    len += line.length + 1;
   }
 
-  return `**Available skills (${skills.length}):**\n${lines.join('\n')}`;
+  return `${header}${lines.join('\n')}`;
 }
 
 function formatSkillsSearchResponse(query: string): string {
