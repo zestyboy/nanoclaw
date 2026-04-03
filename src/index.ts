@@ -287,12 +287,14 @@ function formatSkillsListPages(): string[] {
   let current = `**Available skills (${skills.length}):**\n`;
 
   for (const skill of skills) {
-    const line = `• **${skill.name}** — ${skill.description.slice(0, 80)}\n`;
-    if (current.length + line.length > maxLen) {
+    const label = skill.package
+      ? `• **${skill.name}** (${skill.package}) — ${skill.description.slice(0, 70)}\n`
+      : `• **${skill.name}** — ${skill.description.slice(0, 80)}\n`;
+    if (current.length + label.length > maxLen) {
       pages.push(current.trimEnd());
       current = '';
     }
-    current += line;
+    current += label;
   }
   if (current.trim()) {
     pages.push(current.trimEnd());

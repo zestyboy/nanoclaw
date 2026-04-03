@@ -9,6 +9,8 @@ export interface SkillSummary {
   description: string;
   skillPath: string;
   rootPath: string;
+  /** Parent package name if this is a sub-skill (e.g. "gstack" for gstack/browse). */
+  package?: string;
   source:
     | 'repo-agent'
     | 'repo-codex'
@@ -216,13 +218,32 @@ function scanSkills(roots: string[]): SkillSummary[] {
     }
 
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
+      if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
       const summary = readSkillSummary(rootPath, entry.name);
-      if (!summary) continue;
+      if (summary) {
+        const key = summary.name.toLowerCase();
+        if (!byName.has(key)) {
+          byName.set(key, summary);
+        }
+      }
 
-      const key = summary.name.toLowerCase();
-      if (!byName.has(key)) {
-        byName.set(key, summary);
+      // Scan sub-skills inside parent directories (e.g. gstack/browse)
+      const parentDir = path.join(rootPath, entry.name);
+      let subEntries: fs.Dirent[];
+      try {
+        subEntries = fs.readdirSync(parentDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const sub of subEntries) {
+        if (!sub.isDirectory()) continue;
+        const subSummary = readSkillSummary(parentDir, sub.name);
+        if (!subSummary) continue;
+        subSummary.package = entry.name;
+        const subKey = subSummary.name.toLowerCase();
+        if (!byName.has(subKey)) {
+          byName.set(subKey, subSummary);
+        }
       }
     }
   }
