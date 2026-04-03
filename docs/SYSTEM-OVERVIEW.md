@@ -1245,6 +1245,10 @@ The personal skill library at `~/.ai/skills/` is the user's canonical, portable 
 
 **Managing skills from Claude Code:** Use the `/manage-skills` skill for CRUD with auto-git.
 
+**Disabling/enabling skills:** Move a skill to `~/.ai/skills/_disabled/` to temporarily deactivate it across all surfaces (Claude Code, Codex, NanoClaw). Use `/manage-skills` to disable/enable — it handles the move and auto-commits. Disabled skills are preserved and can be re-enabled at any time.
+
+**Syncthing `.stignore`:** The `~/.ai/skills/.stignore` file excludes `.git/` from Syncthing sync. Git version history is local per device — only the skill files themselves are synced. If you initialize a git repo inside `~/.ai/skills/` on a new device, it gets its own independent history.
+
 **Setting up on a new laptop:**
 1. Clone the skill library: `git clone <remote> ~/.ai/skills`
 2. Create consumer symlinks: `ln -s ~/.ai/skills ~/.claude/skills` (etc.)
