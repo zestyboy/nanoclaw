@@ -1206,12 +1206,23 @@ NanoClaw uses Claude Code skills (`.claude/skills/`) for setup and customization
 
 ### Runtime Skill Layers
 
-NanoClaw now has two related but distinct skill surfaces:
+NanoClaw has one canonical runtime skill catalog and one synced runtime copy:
 
-- **Host-side discovery catalog** — used for `/skills list`, `/skills search`, Discord autocomplete, and inline `+skill-name` recognition
-- **Session runtime skills** — copied into each agent session's `.claude/skills` so the agent can actually load them
+- **Canonical runtime catalog** — used for `/skills list`, `/skills search`, Discord autocomplete, and inline `+skill-name` recognition
+- **Session runtime mirror** — copied into each agent session's `.claude/skills` so the agent can actually load the same skills
 
-The discovery/catalog logic lives in `src/skills.ts`. Runtime session setup still copies built-in agent-facing skills into session state during container or Railway runner startup.
+The shared root resolution, precedence, and sync logic lives in `src/skills.ts`. Both the local container runner and Railway runner use the same runtime skill sync path, so discovery and execution stay aligned.
+
+Default canonical runtime roots are:
+
+- repo-local `.agents/skills`
+- repo-local `.codex/skills`
+- user `~/.agents/skills`
+- user `~/.codex/skills`
+- `${CODEX_HOME}/skills` when `CODEX_HOME` is set
+- built-in `container/skills`
+
+When duplicate skill names exist, earlier roots win. To override the default runtime roots entirely, set `NANOCLAW_RUNTIME_SKILL_ROOTS` using the platform path delimiter (`:` on Unix-like systems).
 
 ### Container Skills
 

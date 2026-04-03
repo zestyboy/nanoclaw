@@ -38,7 +38,20 @@ export interface SkillCatalogOptions {
   roots?: string[];
 }
 
+export interface RuntimeSkillRootResolution {
+  roots: string[];
+  source: 'default' | 'env';
+}
+
+export interface RuntimeSkillSyncResult {
+  copied: SkillSummary[];
+  removed: string[];
+  warnings: string[];
+  roots: string[];
+}
+
 const INLINE_SKILL_RE = /(^|[^\w/])\+([a-z][a-z0-9-_]*)\b/gi;
+const RUNTIME_SKILL_ROOTS_ENV = 'NANOCLAW_RUNTIME_SKILL_ROOTS';
 
 type SkillSource = SkillSummary['source'];
 
@@ -86,6 +99,34 @@ function getDefaultSkillRoots(): string[] {
       path.join(cwd, 'container', 'skills'),
     ].filter((value): value is string => Boolean(value)),
   );
+}
+
+function parseConfiguredRootList(value: string | undefined): string[] {
+  if (!value) return [];
+
+  return dedupePaths(
+    value
+      .split(path.delimiter)
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  );
+}
+
+export function resolveRuntimeSkillRoots(): RuntimeSkillRootResolution {
+  const configured = parseConfiguredRootList(
+    process.env[RUNTIME_SKILL_ROOTS_ENV],
+  );
+  if (configured.length > 0) {
+    return {
+      roots: configured,
+      source: 'env',
+    };
+  }
+
+  return {
+    roots: getDefaultSkillRoots(),
+    source: 'default',
+  };
 }
 
 function parseFrontmatter(content: string): Record<string, unknown> {
@@ -149,6 +190,34 @@ function readSkillSummary(
   };
 }
 
+function scanSkills(roots: string[]): SkillSummary[] {
+  const byName = new Map<string, SkillSummary>();
+
+  for (const rootPath of roots) {
+    if (!fs.existsSync(rootPath)) continue;
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(rootPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const summary = readSkillSummary(rootPath, entry.name);
+      if (!summary) continue;
+
+      const key = summary.name.toLowerCase();
+      if (!byName.has(key)) {
+        byName.set(key, summary);
+      }
+    }
+  }
+
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 function scoreSkillMatch(skill: SkillSummary, query: string): number {
   const needle = query.trim().toLowerCase();
   if (!needle) return 1;
@@ -196,32 +265,75 @@ function levenshtein(a: string, b: string): number {
 export function listSkills(options: SkillCatalogOptions = {}): SkillSummary[] {
   const roots = options.roots
     ? dedupePaths(options.roots)
-    : getDefaultSkillRoots();
-  const byName = new Map<string, SkillSummary>();
+    : resolveRuntimeSkillRoots().roots;
 
-  for (const rootPath of roots) {
-    if (!fs.existsSync(rootPath)) continue;
+  return scanSkills(roots);
+}
 
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(rootPath, { withFileTypes: true });
-    } catch {
-      continue;
-    }
+export function syncRuntimeSkills(
+  destinationRoot: string,
+  options: SkillCatalogOptions = {},
+): RuntimeSkillSyncResult {
+  const resolution = options.roots
+    ? {
+        roots: dedupePaths(options.roots),
+        source: 'env' as const,
+      }
+    : resolveRuntimeSkillRoots();
+  const warnings: string[] = [];
 
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const summary = readSkillSummary(rootPath, entry.name);
-      if (!summary) continue;
+  if (resolution.source === 'env') {
+    for (const rootPath of resolution.roots) {
+      if (!fs.existsSync(rootPath)) {
+        warnings.push(`Runtime skill root not found: ${rootPath}`);
+        continue;
+      }
 
-      const key = summary.name.toLowerCase();
-      if (!byName.has(key)) {
-        byName.set(key, summary);
+      try {
+        fs.readdirSync(rootPath, { withFileTypes: true });
+      } catch (error) {
+        warnings.push(
+          `Runtime skill root unreadable: ${rootPath} (${String(error)})`,
+        );
       }
     }
   }
 
-  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const skills = scanSkills(resolution.roots);
+  fs.mkdirSync(destinationRoot, { recursive: true });
+
+  const desiredDirs = new Set<string>();
+  for (const skill of skills) {
+    const destination = path.join(destinationRoot, skill.name);
+    desiredDirs.add(skill.name);
+    fs.rmSync(destination, { recursive: true, force: true });
+    fs.cpSync(skill.skillPath, destination, { recursive: true });
+  }
+
+  const removed: string[] = [];
+  let existingEntries: fs.Dirent[] = [];
+  try {
+    existingEntries = fs.readdirSync(destinationRoot, { withFileTypes: true });
+  } catch {
+    existingEntries = [];
+  }
+
+  for (const entry of existingEntries) {
+    if (!entry.isDirectory()) continue;
+    if (desiredDirs.has(entry.name)) continue;
+    removed.push(entry.name);
+    fs.rmSync(path.join(destinationRoot, entry.name), {
+      recursive: true,
+      force: true,
+    });
+  }
+
+  return {
+    copied: skills,
+    removed: removed.sort((a, b) => a.localeCompare(b)),
+    warnings,
+    roots: resolution.roots,
+  };
 }
 
 export function findSkillByName(

@@ -9,8 +9,10 @@ import {
   formatSkillInlineToken,
   listSkills,
   parseInlineSkillRefs,
+  resolveRuntimeSkillRoots,
   searchSkills,
   suggestSkill,
+  syncRuntimeSkills,
 } from './skills.js';
 
 function writeSkill(
@@ -26,8 +28,14 @@ function writeSkill(
 
 describe('skills catalog', () => {
   const tempDirs: string[] = [];
+  const originalRuntimeRoots = process.env.NANOCLAW_RUNTIME_SKILL_ROOTS;
 
   afterEach(() => {
+    if (originalRuntimeRoots === undefined) {
+      delete process.env.NANOCLAW_RUNTIME_SKILL_ROOTS;
+    } else {
+      process.env.NANOCLAW_RUNTIME_SKILL_ROOTS = originalRuntimeRoots;
+    }
     for (const dir of tempDirs) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -262,5 +270,92 @@ description: Troubleshoot issues
       'use-railway',
     );
     expect(suggestSkill('totally-different', { roots: [root] })).toBeNull();
+  });
+
+  it('syncs runtime skills using precedence and removes stale directories', () => {
+    const highPriority = makeRoot();
+    const fallback = makeRoot();
+    const destination = makeRoot();
+
+    writeSkill(
+      fallback,
+      'use-railway',
+      `---
+name: use-railway
+description: Fallback description
+---`,
+      '# Skill\n\nFallback body.\n',
+    );
+    writeSkill(
+      highPriority,
+      'use-railway',
+      `---
+name: use-railway
+description: Preferred description
+---`,
+      '# Skill\n\nPreferred body.\n',
+    );
+    writeSkill(
+      fallback,
+      'debug',
+      `---
+name: debug
+description: Troubleshoot issues
+---`,
+    );
+
+    fs.mkdirSync(path.join(destination, 'stale-skill'), { recursive: true });
+    fs.writeFileSync(
+      path.join(destination, 'stale-skill', 'SKILL.md'),
+      '# stale\n',
+    );
+
+    const result = syncRuntimeSkills(destination, {
+      roots: [highPriority, fallback],
+    });
+
+    expect(result.copied.map((skill) => skill.name)).toEqual([
+      'debug',
+      'use-railway',
+    ]);
+    expect(result.removed).toEqual(['stale-skill']);
+    expect(
+      fs.readFileSync(
+        path.join(destination, 'use-railway', 'SKILL.md'),
+        'utf8',
+      ),
+    ).toContain('Preferred description');
+    expect(fs.existsSync(path.join(destination, 'stale-skill'))).toBe(false);
+  });
+
+  it('warns when configured runtime roots are missing', () => {
+    const existing = makeRoot();
+    const missing = path.join(existing, 'missing');
+
+    writeSkill(
+      existing,
+      'debug',
+      `---
+name: debug
+description: Troubleshoot issues
+---`,
+    );
+
+    process.env.NANOCLAW_RUNTIME_SKILL_ROOTS = [existing, missing].join(
+      path.delimiter,
+    );
+
+    expect(resolveRuntimeSkillRoots()).toEqual({
+      roots: [existing, missing],
+      source: 'env',
+    });
+
+    const destination = makeRoot();
+    const result = syncRuntimeSkills(destination);
+
+    expect(result.copied.map((skill) => skill.name)).toEqual(['debug']);
+    expect(result.warnings).toEqual([
+      `Runtime skill root not found: ${missing}`,
+    ]);
   });
 });

@@ -22,6 +22,7 @@ import { ContainerInput, ContainerOutput } from './container-runner.js';
 import { detectAuthMode } from './credential-proxy.js';
 import { isProjectFolder, projectSlug } from './group-folder.js';
 import { logger } from './logger.js';
+import { syncRuntimeSkills } from './skills.js';
 import { RegisteredGroup } from './types.js';
 
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -78,16 +79,17 @@ function prepareWorkspaceDirs(
     );
   }
 
-  // Sync skills from container/skills/ into session's .claude/skills/
-  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(claudeDir, 'skills');
-  if (fs.existsSync(skillsSrc)) {
-    for (const skillDir of fs.readdirSync(skillsSrc)) {
-      const srcDir = path.join(skillsSrc, skillDir);
-      if (!fs.statSync(srcDir).isDirectory()) continue;
-      const dstDir = path.join(skillsDst, skillDir);
-      fs.cpSync(srcDir, dstDir, { recursive: true });
-    }
+  const syncedSkills = syncRuntimeSkills(skillsDst);
+  if (syncedSkills.warnings.length > 0) {
+    logger.warn(
+      {
+        group: group.name,
+        warnings: syncedSkills.warnings,
+        roots: syncedSkills.roots,
+      },
+      'Runtime skill sync completed with warnings',
+    );
   }
 
   // Copy agent-runner source into per-group location
